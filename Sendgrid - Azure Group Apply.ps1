@@ -26,8 +26,13 @@
 #   skipped and the script is safe to re-run.
 # - A row whose user, group, subuser, or role cannot be resolved is warned and
 #   skipped; lookup failures are never treated as permission to act.
-# - Migration order per member: create/patch the parent teammate FIRST; legacy
-#   subuser-context teammates are deleted only after that succeeds. An existing
+# - Migration order: when a parent teammate already exists it is patched FIRST
+#   and the legacy subuser-context teammates are deleted only after that
+#   succeeds. When NO parent teammate exists, SendGrid's account-wide username
+#   uniqueness forces the reverse order (POST /v3/sso/teammates returns 400
+#   "username exists" otherwise): delete the legacy teammate(s) to free the
+#   username, then create the parent SSO teammate. A create that fails after
+#   the delete is warned loudly — re-run the apply to retry it. An existing
 #   parent-scoped (non-admin) teammate is a conflict: warned, nothing applied.
 #
 # Requirements
@@ -557,12 +562,72 @@ else {
 
 		$accessSummary = (@($entries | ForEach-Object { '{0} ({1})' -f $_.Subuser, $_.Role }) -join ', ')
 
+		$existingTeammate = if ($parentTeammateByKey.ContainsKey($member)) { $parentTeammateByKey[$member] } else { $null }
+
 		if (-not $ApplyLegacyMigrations) {
-			Write-Host ("  [WhatIf] {0}: would ensure parent subuser_access for {1}, then delete {2} legacy teammate(s)." -f $member, $accessSummary, $legacyToDelete.Count) -ForegroundColor Yellow
+			if ($null -eq $existingTeammate) {
+				Write-Host ("  [WhatIf] {0}: would delete {1} legacy teammate(s) to free the username, then create the parent SSO teammate with {2}." -f $member, $legacyToDelete.Count, $accessSummary) -ForegroundColor Yellow
+			}
+			else {
+				Write-Host ("  [WhatIf] {0}: would ensure parent subuser_access for {1}, then delete {2} legacy teammate(s)." -f $member, $accessSummary, $legacyToDelete.Count) -ForegroundColor Yellow
+			}
 			continue
 		}
 
-		$existingTeammate = if ($parentTeammateByKey.ContainsKey($member)) { $parentTeammateByKey[$member] } else { $null }
+		if ($null -eq $existingTeammate) {
+			# SendGrid teammate usernames are account-wide: the parent SSO teammate
+			# cannot be created while a legacy subuser-context teammate still holds
+			# the username (POST returns 400 "username exists"). Delete the legacy
+			# teammate(s) first, then create the parent teammate.
+			$user = Resolve-EntraUser -Upn $member
+			if ($null -eq $user) {
+				Add-ApplyWarning "Migration for '$member': user not found in Entra; skipped."
+				continue
+			}
+
+			$deletedRows = New-Object System.Collections.Generic.List[object]
+			foreach ($row in $legacyToDelete) {
+				$legacyName = ([string](Get-OptionalObjectProperty -InputObject $row -Name 'Teammate' -Default '')).Trim()
+				$legacySubuser = ([string](Get-OptionalObjectProperty -InputObject $row -Name 'Subuser' -Default '')).Trim()
+				if ([string]::IsNullOrWhiteSpace($legacyName) -or [string]::IsNullOrWhiteSpace($legacySubuser)) {
+					Add-ApplyWarning "Migration for '$member': legacy row missing Teammate/Subuser; delete skipped."
+					continue
+				}
+
+				try {
+					Remove-SendGridTeammate -Client $sendGridClient -TeammateName $legacyName -OnBehalfOf $legacySubuser -Confirm:$false
+					[void]$deletedRows.Add($row)
+					Write-Host ("  {0}: deleted legacy teammate '{1}' on subuser '{2}'." -f $member, $legacyName, $legacySubuser) -ForegroundColor Green
+				}
+				catch {
+					Add-ApplyWarning "Migration for '$member': failed to delete legacy teammate '$legacyName' on subuser '$legacySubuser': $(Get-SendGridErrorMessage -ErrorRecord $_)"
+				}
+			}
+
+			if ($deletedRows.Count -eq 0) {
+				Add-ApplyWarning "Migration for '$member': no legacy teammate could be deleted; parent teammate not created."
+				continue
+			}
+
+			$firstName = ([string](Get-OptionalObjectProperty -InputObject $user -Name 'GivenName' -Default '')).Trim()
+			$lastName = ([string](Get-OptionalObjectProperty -InputObject $user -Name 'Surname' -Default '')).Trim()
+			if ([string]::IsNullOrWhiteSpace($firstName) -or [string]::IsNullOrWhiteSpace($lastName)) {
+				$displayParts = @((([string](Get-OptionalObjectProperty -InputObject $user -Name 'DisplayName' -Default '')).Trim() -split '\s+') | Where-Object { $_ })
+				if ([string]::IsNullOrWhiteSpace($firstName)) { $firstName = if ($displayParts.Count -gt 0) { $displayParts[0] } else { ($member -split '@')[0] } }
+				if ([string]::IsNullOrWhiteSpace($lastName)) { $lastName = if ($displayParts.Count -gt 1) { ($displayParts[1..($displayParts.Count - 1)] -join ' ') } else { 'User' } }
+			}
+
+			try {
+				New-SendGridSsoTeammate -Client $sendGridClient -Email $member -FirstName $firstName -LastName $lastName -SubuserAccess @($entries | ForEach-Object { $_.Payload }) | Out-Null
+				Write-Host ("  {0}: created parent SSO teammate with subuser_access for {1}." -f $member, $accessSummary) -ForegroundColor Green
+			}
+			catch {
+				Add-ApplyWarning "ATTENTION '$member': legacy teammate(s) deleted but the parent SSO teammate creation FAILED — they currently have NO SendGrid access. Re-run the apply to retry, or create manually with: $accessSummary. Error: $(Get-SendGridErrorMessage -ErrorRecord $_)"
+			}
+
+			continue
+		}
+
 		$parentReady = $false
 
 		try {
@@ -598,25 +663,6 @@ else {
 						}
 						$parentReady = $true
 					}
-				}
-			}
-			else {
-				$user = Resolve-EntraUser -Upn $member
-				if ($null -eq $user) {
-					Add-ApplyWarning "Migration for '$member': user not found in Entra; skipped."
-				}
-				else {
-					$firstName = ([string](Get-OptionalObjectProperty -InputObject $user -Name 'GivenName' -Default '')).Trim()
-					$lastName = ([string](Get-OptionalObjectProperty -InputObject $user -Name 'Surname' -Default '')).Trim()
-					if ([string]::IsNullOrWhiteSpace($firstName) -or [string]::IsNullOrWhiteSpace($lastName)) {
-						$displayParts = @((([string](Get-OptionalObjectProperty -InputObject $user -Name 'DisplayName' -Default '')).Trim() -split '\s+') | Where-Object { $_ })
-						if ([string]::IsNullOrWhiteSpace($firstName)) { $firstName = if ($displayParts.Count -gt 0) { $displayParts[0] } else { ($member -split '@')[0] } }
-						if ([string]::IsNullOrWhiteSpace($lastName)) { $lastName = if ($displayParts.Count -gt 1) { ($displayParts[1..($displayParts.Count - 1)] -join ' ') } else { 'User' } }
-					}
-
-					New-SendGridSsoTeammate -Client $sendGridClient -Email $member -FirstName $firstName -LastName $lastName -SubuserAccess @($entries | ForEach-Object { $_.Payload }) | Out-Null
-					Write-Host ("  {0}: created parent SSO teammate with subuser_access for {1}." -f $member, $accessSummary) -ForegroundColor Green
-					$parentReady = $true
 				}
 			}
 		}
