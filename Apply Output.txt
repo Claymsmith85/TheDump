@@ -1,0 +1,104 @@
+PS C:\Users\Clayton.Smith\GitHub Repo Clones\Clayton_M365_Scripts> . 'C:\Users\Clayton.Smith\GitHub Repo Clones\Clayton_M365_Scripts\Sendgrid\Sendgrid - Azure Group Apply.ps1'
+
+Loading plan from C:\Users\Clayton.Smith\GitHub Repo Clones\Clayton_M365_Scripts\Sendgrid\SendGridPlan_20260914-103600
+  01-groups-to-create.csv                  0 row(s)
+  02-group-memberships.csv                 35 row(s)
+  03-sendgrid-teammate-removals.csv        0 row(s)
+  04-legacy-teammate-migrations.csv        20 row(s)
+  05-sso-group-additions.csv               0 row(s)
+
+Apply flags ($false = preview only):
+  ApplyEntraGroups      : True
+  ApplyEntraMemberships : True
+  ApplySendGridRemovals : True
+  ApplyLegacyMigrations : True
+
+Preparing SendGrid + Graph clients...
+Reusing cached Delinea token from $env:SS_TOKEN.
+
+1) Entra groups to create
+  Nothing to do.
+
+2) Entra group memberships
+  Already member: clayton.smith@corespecialty.com in cs-sendgrid-admin
+  Already member: sandesh.awate@corespecialty.com in cs-sendgrid-admin
+  Already member: tommy.kanger@corespecialty.com in cs-sendgrid-admin
+  Added alyssa.alonso@corespecialty.com to cs-sendgrid-broker-communications-observer
+  Already member: andrea.perrigoue@corespecialty.com in cs-sendgrid-coretritonrelay-accountant
+  Added earl.texter@corespecialty.com to cs-sendgrid-coretritonrelay-observer
+  Added earl.texter@corespecialty.com to cs-sendgrid-duckcreek-dev-qa-uat-observer
+  Added earl.texter@corespecialty.com to cs-sendgrid-duckcreek-prod-observer
+  Already member: bobbisue.morrison@corespecialty.com in cs-sendgrid-internal-email-communications-accountant
+  Already member: julie.kidwell@corespecialty.com in cs-sendgrid-internal-email-communications-accountant
+  Already member: thomas.breuler@corespecialty.com in cs-sendgrid-jetfile-prod-admin
+  Added aimie.reese@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added amanda.hillquist@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added carly.jones@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added david.purviance@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added haley.farrell@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added jeffrey.sutton@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added jessica.lavalley@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added kathleen.schwartz@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added linda.tapia@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added lisa.kamuf@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added melissa.pelham@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added natalie.galindo@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added peter.barnes@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added tomasso.campisi@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added zena.contrades@corespecialty.com to cs-sendgrid-lau-marketing-observer
+  Added alyssa.plewacki@corespecialty.com to cs-sendgrid-quicksilver-nonprod-observer
+  Added beau.davis@corespecialty.com to cs-sendgrid-quicksilver-nonprod-observer
+  Added misty.hunter@corespecialty.com to cs-sendgrid-quicksilver-nonprod-observer
+  Added sarah.gleich@corespecialty.com to cs-sendgrid-quicksilver-nonprod-observer
+  Added alyssa.plewacki@corespecialty.com to cs-sendgrid-quicksilver-prod-observer
+  Added beau.davis@corespecialty.com to cs-sendgrid-quicksilver-prod-observer
+  Added misty.hunter@corespecialty.com to cs-sendgrid-quicksilver-prod-observer
+  Added sarah.gleich@corespecialty.com to cs-sendgrid-quicksilver-prod-observer
+  Already member: shelby.pugh@corespecialty.com in cs-sendgrid-yosemite-application-relay-accountant
+
+3) SendGrid teammate removals
+  Nothing to do.
+
+4) Legacy teammate migrations (subuser-context -> parent subuser_access)
+  ! Migration for 'aimie.reese@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'alyssa.alonso@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'amanda.hillquist@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'andrea.perrigoue@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'bobbisue.morrison@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'carly.jones@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'david.purviance@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'haley.farrell@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'jeffrey.sutton@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'jessica.lavalley@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'julie.kidwell@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'kathleen.schwartz@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'linda.tapia@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'lisa.kamuf@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'melissa.pelham@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'natalie.galindo@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'peter.barnes@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'shelby.pugh@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'tomasso.campisi@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  ! Migration for 'zena.contrades@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+
+Warnings:
+  - Migration for 'aimie.reese@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'alyssa.alonso@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'amanda.hillquist@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'andrea.perrigoue@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'bobbisue.morrison@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'carly.jones@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'david.purviance@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'haley.farrell@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'jeffrey.sutton@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'jessica.lavalley@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'julie.kidwell@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'kathleen.schwartz@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'linda.tapia@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'lisa.kamuf@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'melissa.pelham@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'natalie.galindo@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'peter.barnes@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'shelby.pugh@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'tomasso.campisi@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
+  - Migration for 'zena.contrades@corespecialty.com' failed before deleting legacy teammates: SendGrid API call failed: POST https://api.sendgrid.com/v3/sso/teammates. StatusCode=400. Details=username exists
