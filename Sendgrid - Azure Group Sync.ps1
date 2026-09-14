@@ -71,6 +71,15 @@ $SendGridImplicitScopes = @(
 	'user.profile.update'
 )
 
+# Scopes SendGrid may silently refuse to persist on restricted subuser access
+# (seen with the Marketing-tab pair). They are still requested on every update,
+# but never count as drift on their own, so the sync cannot re-patch forever
+# when SendGrid drops them.
+$SendGridBestEffortScopes = @(
+	'marketing.read',
+	'marketing.automation.read'
+)
+
 # Resolve this script's folder whether run as a file (F5) or via "Run Selection" (F8)
 $ScriptDir = if ($PSScriptRoot) {
 	$PSScriptRoot
@@ -123,6 +132,9 @@ $implicitScopeSet = New-Object 'System.Collections.Generic.HashSet[string]' ([Sy
 foreach ($implicitScope in $SendGridImplicitScopes) {
 	[void]$implicitScopeSet.Add($implicitScope)
 }
+foreach ($bestEffortScope in $SendGridBestEffortScopes) {
+	[void]$implicitScopeSet.Add($bestEffortScope)
+}
 
 function ConvertTo-ScopeSet {
 	# Normalized scope set with SendGrid's implicit scopes removed.
@@ -142,16 +154,61 @@ function ConvertTo-ScopeSet {
 	return ,$set
 }
 
-function Test-ScopeSetEqual {
+function Get-SubuserAccessDrift {
+	# $null when the current access satisfies the desired entries; otherwise a
+	# short description of the first difference found. Implicit and best-effort
+	# scopes are excluded from the comparison.
 	[CmdletBinding()]
 	param(
-		[string[]]$Desired,
-		[string[]]$Current
+		[Parameter(Mandatory)]
+		[object]$Access,
+
+		[object[]]$DesiredEntries
 	)
 
-	$desiredSet = ConvertTo-ScopeSet -Scopes $Desired
-	$currentSet = ConvertTo-ScopeSet -Scopes $Current
-	return $desiredSet.SetEquals($currentSet)
+	if (-not [bool]$Access.HasRestrictedSubuserAccess) {
+		return 'teammate is not in restricted subuser mode'
+	}
+
+	$currentById = New-Object 'System.Collections.Generic.Dictionary[int, object]'
+	foreach ($currentEntry in @($Access.SubuserAccess)) {
+		$currentId = Get-OptionalObjectProperty -InputObject $currentEntry -Name 'id' -Default $null
+		if ($null -ne $currentId) {
+			$currentById[[int]$currentId] = $currentEntry
+		}
+	}
+
+	if (@($DesiredEntries).Count -ne $currentById.Count) {
+		return "has $($currentById.Count) subuser entries, expected $(@($DesiredEntries).Count)"
+	}
+
+	foreach ($desiredEntry in @($DesiredEntries)) {
+		$desiredId = [int]$desiredEntry['id']
+		if (-not $currentById.ContainsKey($desiredId)) {
+			return "no entry for subuser id $desiredId"
+		}
+
+		$currentEntry = $currentById[$desiredId]
+		$currentType = ([string](Get-OptionalObjectProperty -InputObject $currentEntry -Name 'permission_type' -Default '')).Trim().ToLowerInvariant()
+		if ($currentType -ne [string]$desiredEntry['permission_type']) {
+			return "subuser id ${desiredId}: permission_type is '$currentType', expected '$($desiredEntry['permission_type'])'"
+		}
+
+		if ($currentType -eq 'restricted') {
+			$desiredSet = ConvertTo-ScopeSet -Scopes @($desiredEntry['scopes'])
+			$currentSet = ConvertTo-ScopeSet -Scopes @((Get-OptionalObjectProperty -InputObject $currentEntry -Name 'scopes' -Default @()))
+			$missingScopes = @($desiredSet | Where-Object { -not $currentSet.Contains($_) } | Sort-Object)
+			$extraScopes = @($currentSet | Where-Object { -not $desiredSet.Contains($_) } | Sort-Object)
+			if ($missingScopes.Count -gt 0 -or $extraScopes.Count -gt 0) {
+				$parts = New-Object System.Collections.Generic.List[string]
+				if ($missingScopes.Count -gt 0) { [void]$parts.Add("missing scope(s): $($missingScopes -join ', ')") }
+				if ($extraScopes.Count -gt 0) { [void]$parts.Add("extra scope(s): $($extraScopes -join ', ')") }
+				return "subuser id ${desiredId}: $($parts -join '; ')"
+			}
+		}
+	}
+
+	return $null
 }
 
 function Resolve-EntraUserAccountState {
@@ -705,56 +762,48 @@ foreach ($upn in @($effectiveByUpn.Keys | Sort-Object)) {
 		}
 
 		# Desired: subuser-scoped access.
-		$compliant = $false
-		if ($access.HasRestrictedSubuserAccess) {
-			$currentById = New-Object 'System.Collections.Generic.Dictionary[int, object]'
-			foreach ($currentEntry in @($access.SubuserAccess)) {
-				$currentId = Get-OptionalObjectProperty -InputObject $currentEntry -Name 'id' -Default $null
-				if ($null -ne $currentId) {
-					$currentById[[int]$currentId] = $currentEntry
-				}
-			}
+		$drift = Get-SubuserAccessDrift -Access $access -DesiredEntries $effective.Entries
 
-			$desiredIds = @($effective.Entries | ForEach-Object { [int]$_['id'] })
-			if (@($desiredIds).Count -eq $currentById.Count) {
-				$compliant = $true
-				foreach ($desiredEntry in $effective.Entries) {
-					$desiredId = [int]$desiredEntry['id']
-					if (-not $currentById.ContainsKey($desiredId)) {
-						$compliant = $false
-						break
-					}
-
-					$currentEntry = $currentById[$desiredId]
-					$currentType = ([string](Get-OptionalObjectProperty -InputObject $currentEntry -Name 'permission_type' -Default '')).Trim().ToLowerInvariant()
-					if ($currentType -ne [string]$desiredEntry['permission_type']) {
-						$compliant = $false
-						break
-					}
-
-					if ($currentType -eq 'restricted') {
-						$currentScopes = @((Get-OptionalObjectProperty -InputObject $currentEntry -Name 'scopes' -Default @()))
-						if (-not (Test-ScopeSetEqual -Desired @($desiredEntry['scopes']) -Current $currentScopes)) {
-							$compliant = $false
-							break
-						}
-					}
-				}
-			}
-		}
-
-		if ($compliant) {
+		if ($null -eq $drift) {
 			Write-Host ("  OK: {0} matches: {1}" -f $upn, $effective.Summary) -ForegroundColor DarkGray
 			continue
 		}
 
 		if (-not $ApplyTeammateChanges) {
-			Write-Host ("  [WhatIf] Would set {0} subuser access to: {1}" -f $upn, $effective.Summary) -ForegroundColor Yellow
+			Write-Host ("  [WhatIf] Would set {0} subuser access to: {1} ({2})" -f $upn, $effective.Summary, $drift) -ForegroundColor Yellow
 			continue
 		}
 
 		Set-SendGridTeammateSubuserAccess -Client $sendGridClient -TeammateName $teammateName -SubuserAccess $effective.Entries | Out-Null
-		Write-Host ("  Set {0} subuser access to: {1}" -f $upn, $effective.Summary) -ForegroundColor Green
+
+		# Verify by reading back: SendGrid can return 200 yet drop parts of the request.
+		$verifyAccess = Get-SendGridTeammateSubuserAccess -Client $sendGridClient -TeammateName $teammateName
+		$verifyDrift = Get-SubuserAccessDrift -Access $verifyAccess -DesiredEntries $effective.Entries
+		if ($null -eq $verifyDrift) {
+			Write-Host ("  Set {0} subuser access to: {1} (verified)" -f $upn, $effective.Summary) -ForegroundColor Green
+		}
+		else {
+			Add-SyncWarning "Teammate '$upn': update did not fully persist — $verifyDrift. SendGrid accepted the PATCH but dropped part of it."
+		}
+
+		# Report best-effort scopes SendGrid chose not to keep (informational; never counted as drift).
+		$verifyById = New-Object 'System.Collections.Generic.Dictionary[int, object]'
+		foreach ($verifyEntry in @($verifyAccess.SubuserAccess)) {
+			$verifyId = Get-OptionalObjectProperty -InputObject $verifyEntry -Name 'id' -Default $null
+			if ($null -ne $verifyId) { $verifyById[[int]$verifyId] = $verifyEntry }
+		}
+		foreach ($desiredEntry in @($effective.Entries)) {
+			if ([string]$desiredEntry['permission_type'] -ne 'restricted' -or -not $verifyById.ContainsKey([int]$desiredEntry['id'])) {
+				continue
+			}
+			$requestedBestEffort = @(@($desiredEntry['scopes']) | Where-Object { $SendGridBestEffortScopes -contains $_ })
+			if ($requestedBestEffort.Count -eq 0) { continue }
+			$verifyScopes = @((Get-OptionalObjectProperty -InputObject $verifyById[[int]$desiredEntry['id']] -Name 'scopes' -Default @()))
+			$droppedBestEffort = @($requestedBestEffort | Where-Object { $verifyScopes -notcontains $_ })
+			if ($droppedBestEffort.Count -gt 0) {
+				Add-SyncWarning "Teammate '$upn', subuser id $($desiredEntry['id']): SendGrid did not persist optional scope(s) $($droppedBestEffort -join ', ') — the Marketing tab will not appear there (likely unsupported on this account/subuser)."
+			}
+		}
 	}
 	catch {
 		Add-SyncWarning "Failed to reconcile teammate '$upn': $(Get-SendGridErrorMessage -ErrorRecord $_)"

@@ -1656,7 +1656,9 @@ function Resolve-SendGridPersonaFromScopes {
 			continue
 		}
 
-		$missing = @($template | Where-Object { -not $actualSet.Contains($_) })
+		# Best-effort scopes (the Marketing-tab pair) may be silently dropped by
+		# SendGrid; their absence must not break persona matching.
+		$missing = @($template | Where-Object { -not $actualSet.Contains($_) -and $SendGridSubuserMarketingUiScopes -notcontains $_ })
 		if ($missing.Count -gt 0) {
 			continue
 		}
