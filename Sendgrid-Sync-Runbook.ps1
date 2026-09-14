@@ -17,7 +17,10 @@
       cs-sendgrid-<subuser>-<role> -> one subuser_access entry per subuser
         role admin                                 -> permission_type = admin
         role accountant|developer|marketer|observer -> permission_type =
-        restricted with the subuser persona template
+        restricted with the subuser persona template (personas with campaigns
+        access — marketer, developer — additionally carry marketing.read +
+        marketing.automation.read, which the UI requires to show the subuser
+        "Marketing" tab)
 
     Baseline: every SendGrid subuser gets its 5 role groups in Entra (plus the
     admin / admin-ro core groups); missing groups are created empty when
