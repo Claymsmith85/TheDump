@@ -62,8 +62,11 @@
 # - admin-ro together with any subuser group is a conflict (cannot coexist on
 #   one Teammate): warn, apply nothing for that user.
 # - Unknown subuser/persona in a group name: warn and continue.
-# - Teammate with custom (non-persona) scopes: warn only; never auto-mapped.
-#   When in doubt a user gets NO proposed roles; add them by hand in the plan CSVs.
+# - Teammate with custom (non-persona) scopes on a SUBUSER: when in doubt,
+#   propose read-only for that subuser only — the cs-sendgrid-<subuser>-observer
+#   group ($FallbackToSubuserObserver, tagged 'fallback-observer' in the plan).
+#   Parent-scoped doubt has no "their subuser" target, so it stays manual:
+#   warn only, add by hand in the plan CSVs.
 #
 # Identity
 # - SSO Teammate username == email and must match the IdP claim.
@@ -98,6 +101,7 @@ $SendGridSecretIdOverride = $null # Optional int secret ID override
 $GraphCertSecretIdOverride = $null # Optional int secret ID override
 $EmitMemberDetail = $true
 $ApplySendGridRemovals = $false # Set $true to remove disabled/not-found users from SendGrid
+$FallbackToSubuserObserver = $true # When subuser scopes match no persona, propose read-only (observer) for that subuser only
 $ExportPlanCsv = $true # Export the proposed changes as CSV files for manual review/tweaks
 $ExportFolderOverride = $null # Optional export folder; default: <script folder>\SendGridPlan_<timestamp>
 
@@ -695,7 +699,14 @@ foreach ($teammate in $teammates) {
 			$resolved = Resolve-SendGridPersonaFromScopes -Scopes $entryScopes -Scope Subuser
 
 			if ([string]::IsNullOrWhiteSpace([string]$resolved.Persona)) {
-				[void]$warnings.Add("Parent teammate '$memberKey' on subuser '$entrySubuser' has custom scopes ($($entryScopes.Count)); no persona match. Manual mapping needed.")
+				if (-not $FallbackToSubuserObserver) {
+					[void]$warnings.Add("Parent teammate '$memberKey' on subuser '$entrySubuser' has custom scopes ($($entryScopes.Count)); no persona match. Manual mapping needed.")
+					continue
+				}
+
+				[void]$warnings.Add("Parent teammate '$memberKey' on subuser '$entrySubuser' has custom scopes ($($entryScopes.Count)); no persona match. Defaulted to read-only (observer) for this subuser; review in the plan CSVs.")
+				$groupName = '{0}{1}-observer' -f $GroupPrefix, $subuserToken
+				Add-RequiredGroupEntry -Map $requiredGroups -GroupName $groupName -Reason 'fallback-observer' -Member $memberKey
 				continue
 			}
 
@@ -819,7 +830,14 @@ foreach ($subuser in $subusers) {
 			}
 
 			if ([string]::IsNullOrWhiteSpace([string]$resolved.Persona)) {
-				[void]$warnings.Add("Legacy teammate '$displayKey' on subuser '$subuserName' did not map to a known persona ($($subScopes.Count) scope(s)). Manual mapping needed.")
+				if ($FallbackToSubuserObserver) {
+					[void]$warnings.Add("Legacy teammate '$displayKey' on subuser '$subuserName' did not map to a known persona ($($subScopes.Count) scope(s)). Defaulted to read-only (observer) for this subuser; review in the plan CSVs.")
+					$mappedGroup = '{0}{1}-observer' -f $GroupPrefix, $subuserToken
+					$mappedBy = 'observer-fallback'
+				}
+				else {
+					[void]$warnings.Add("Legacy teammate '$displayKey' on subuser '$subuserName' did not map to a known persona ($($subScopes.Count) scope(s)). Manual mapping needed.")
+				}
 			}
 			else {
 				if ($resolved.MatchType -eq 'superset') {
