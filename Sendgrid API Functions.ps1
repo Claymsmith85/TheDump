@@ -857,3 +857,698 @@ function Send-SendGridMailMessage {
 	Invoke-SendGridRequest -Client $Client -Method POST -Path '/v3/mail/send' -Body $body -OnBehalfOf $OnBehalfOf -RawResponse
 }
 
+
+# -----------------------------------------------------------------------------
+# SendGrid role/persona catalog (shared by 'Sendgrid - Azure Group Management'
+# and 'Sendgrid - Azure Group Apply.ps1').
+# -----------------------------------------------------------------------------
+# Role/spec catalog. Reconciliation code (Phase 2+) consumes these definitions.
+$SendGridRoleSpec = [ordered]@{
+	GroupPrefix = 'cs-sendgrid-'
+
+	Admin = [ordered]@{
+		Key          = 'admin'
+		GroupName    = 'cs-sendgrid-admin'
+		RoleKind     = 'administrator'
+		AccessTarget = 'main-and-all-subusers'
+		Precedence   = 300
+		Notes        = 'is_admin = true on the parent SSO teammate (all scopes).'
+	}
+
+	AdminReadOnly = [ordered]@{
+		Key          = 'admin-ro'
+		GroupName    = 'cs-sendgrid-admin-ro'
+		RoleKind     = 'persona'
+		PersonaSlug  = 'observer'
+		AccessTarget = 'parent'
+		Precedence   = 200
+		Notes        = 'Observer persona scopes on the parent. Cannot be combined with subuser_access.'
+	}
+
+	SubuserAccess = [ordered]@{
+		Key          = 'subuser-access'
+		RoleKind     = 'subuser_access'
+		AccessTarget = 'single-subuser'
+		Precedence   = 100
+		# Format: cs-sendgrid-<subuser>-<role>
+		# role 'admin' -> permission_type admin; persona slugs -> permission_type restricted.
+		GroupPattern = '^(?i)cs-sendgrid-(?<Subuser>[a-z0-9][a-z0-9-]*)-(?<Role>admin|accountant|developer|marketer|observer)$'
+	}
+}
+
+# Twilio SendGrid persona scopes (parent account) source:
+# https://www.twilio.com/docs/sendgrid/ui/account-and-settings/teammate-permissions#persona-scopes
+$SendGridPersonaScopes = [ordered]@{
+	accountant = @(
+		'billing.create',
+		'billing.read',
+		'billing.update',
+		'billing.delete',
+		'mail_settings.read',
+		'partner_settings.read',
+		'tracking_settings.read',
+		'stats.read',
+		'stats.global.read',
+		'categories.stats.read',
+		'categories.stats.sums.read',
+		'devices.stats.read',
+		'clients.stats.read',
+		'clients.phone.stats.read',
+		'clients.tablet.stats.read',
+		'clients.webmail.stats.read',
+		'clients.desktop.stats.read',
+		'geo.stats.read',
+		'mailbox_providers.stats.read',
+		'browsers.stats.read',
+		'subusers.stats.read',
+		'subusers.stats.sums.read',
+		'subusers.stats.monthly.read',
+		'user.webhooks.parse.stats.read',
+		'user.account.read',
+		'user.credits.read',
+		'user.email.read',
+		'user.profile.read',
+		'user.profile.update',
+		'user.timezone.read',
+		'user.username.read',
+		'user.settings.enforced_tls.read',
+		'categories.read',
+		'sender_verification_eligible',
+		'sender_verification_legacy',
+		'2fa_exempt',
+		'2fa_required'
+	)
+
+	developer = @(
+		'alerts.create',
+		'alerts.read',
+		'alerts.update',
+		'alerts.delete',
+		'asm.groups.create',
+		'asm.groups.read',
+		'asm.groups.update',
+		'asm.groups.delete',
+		'ips.warmup.create',
+		'ips.warmup.read',
+		'ips.warmup.update',
+		'ips.warmup.delete',
+		'ips.pools.create',
+		'ips.pools.read',
+		'ips.pools.update',
+		'ips.pools.delete',
+		'ips.pools.ips.create',
+		'ips.pools.ips.read',
+		'ips.pools.ips.update',
+		'ips.pools.ips.delete',
+		'ips.assigned.read',
+		'ips.create',
+		'ips.read',
+		'ips.update',
+		'ips.delete',
+		'mail.send',
+		'mail_settings.read',
+		'mail_settings.bcc.read',
+		'mail_settings.bcc.update',
+		'mail_settings.address_whitelist.read',
+		'mail_settings.address_whitelist.update',
+		'mail_settings.footer.read',
+		'mail_settings.footer.update',
+		'mail_settings.forward_spam.read',
+		'mail_settings.forward_spam.update',
+		'mail_settings.plain_content.read',
+		'mail_settings.plain_content.update',
+		'mail_settings.spam_check.read',
+		'mail_settings.spam_check.update',
+		'mail_settings.bounce_purge.read',
+		'mail_settings.bounce_purge.update',
+		'mail_settings.forward_bounce.read',
+		'mail_settings.forward_bounce.update',
+		'partner_settings.read',
+		'tracking_settings.read',
+		'tracking_settings.click.read',
+		'tracking_settings.click.update',
+		'tracking_settings.subscription.read',
+		'tracking_settings.subscription.update',
+		'tracking_settings.open.read',
+		'tracking_settings.open.update',
+		'tracking_settings.google_analytics.read',
+		'tracking_settings.google_analytics.update',
+		'user.webhooks.event.settings.read',
+		'user.webhooks.event.settings.update',
+		'user.webhooks.event.test.create',
+		'user.webhooks.event.test.read',
+		'user.webhooks.event.test.update',
+		'user.webhooks.parse.settings.create',
+		'user.webhooks.parse.settings.read',
+		'user.webhooks.parse.settings.update',
+		'user.webhooks.parse.settings.delete',
+		'stats.read',
+		'stats.global.read',
+		'categories.stats.read',
+		'categories.stats.sums.read',
+		'devices.stats.read',
+		'clients.stats.read',
+		'clients.phone.stats.read',
+		'clients.tablet.stats.read',
+		'clients.webmail.stats.read',
+		'clients.desktop.stats.read',
+		'geo.stats.read',
+		'mailbox_providers.stats.read',
+		'browsers.stats.read',
+		'subusers.stats.read',
+		'subusers.stats.sums.read',
+		'subusers.stats.monthly.read',
+		'user.webhooks.parse.stats.read',
+		'templates.create',
+		'templates.read',
+		'templates.update',
+		'templates.delete',
+		'templates.versions.create',
+		'templates.versions.read',
+		'templates.versions.update',
+		'templates.versions.delete',
+		'templates.versions.activate.create',
+		'user.account.read',
+		'user.credits.read',
+		'user.email.read',
+		'user.profile.read',
+		'user.profile.update',
+		'user.timezone.read',
+		'user.username.read',
+		'user.settings.enforced_tls.read',
+		'api_keys.create',
+		'api_keys.read',
+		'api_keys.update',
+		'api_keys.delete',
+		'categories.create',
+		'categories.read',
+		'categories.update',
+		'categories.delete',
+		'mail_settings.template.read',
+		'mail_settings.template.update',
+		'marketing_campaigns.create',
+		'marketing_campaigns.read',
+		'marketing_campaigns.update',
+		'marketing_campaigns.delete',
+		'mail.batch.create',
+		'mail.batch.read',
+		'mail.batch.update',
+		'mail.batch.delete',
+		'user.scheduled_sends.create',
+		'user.scheduled_sends.read',
+		'user.scheduled_sends.update',
+		'user.scheduled_sends.delete',
+		'access_settings.whitelist.create',
+		'access_settings.whitelist.read',
+		'access_settings.whitelist.update',
+		'access_settings.whitelist.delete',
+		'access_settings.activity.read',
+		'suppression.create',
+		'suppression.read',
+		'suppression.update',
+		'suppression.delete',
+		'email_testing.read',
+		'email_testing.write',
+		'sender_verification_eligible',
+		'sender_verification_legacy',
+		'2fa_exempt',
+		'2fa_required'
+	)
+
+	marketer = @(
+		'alerts.create',
+		'alerts.read',
+		'alerts.update',
+		'alerts.delete',
+		'asm.groups.create',
+		'asm.groups.read',
+		'asm.groups.update',
+		'asm.groups.delete',
+		'mail_settings.read',
+		'mail_settings.spam_check.read',
+		'mail_settings.spam_check.update',
+		'partner_settings.read',
+		'tracking_settings.read',
+		'tracking_settings.click.read',
+		'tracking_settings.click.update',
+		'tracking_settings.subscription.read',
+		'tracking_settings.subscription.update',
+		'tracking_settings.open.read',
+		'tracking_settings.open.update',
+		'tracking_settings.google_analytics.read',
+		'tracking_settings.google_analytics.update',
+		'stats.global.read',
+		'categories.stats.read',
+		'categories.stats.sums.read',
+		'devices.stats.read',
+		'clients.stats.read',
+		'clients.phone.stats.read',
+		'clients.tablet.stats.read',
+		'clients.webmail.stats.read',
+		'clients.desktop.stats.read',
+		'geo.stats.read',
+		'mailbox_providers.stats.read',
+		'browsers.stats.read',
+		'subusers.stats.read',
+		'subusers.stats.sums.read',
+		'subusers.stats.monthly.read',
+		'user.webhooks.parse.stats.read',
+		'templates.create',
+		'templates.read',
+		'templates.update',
+		'templates.delete',
+		'templates.versions.create',
+		'templates.versions.read',
+		'templates.versions.update',
+		'templates.versions.delete',
+		'templates.versions.activate.create',
+		'user.account.read',
+		'user.credits.read',
+		'user.email.read',
+		'user.profile.read',
+		'user.profile.update',
+		'user.timezone.read',
+		'user.username.read',
+		'user.settings.enforced_tls.read',
+		'categories.read',
+		'marketing_campaigns.create',
+		'marketing_campaigns.read',
+		'marketing_campaigns.update',
+		'marketing_campaigns.delete',
+		'mail.batch.read',
+		'user.scheduled_sends.read',
+		'suppression.create',
+		'suppression.read',
+		'suppression.update',
+		'suppression.delete',
+		'email_testing.read',
+		'email_testing.write',
+		'sender_verification_eligible',
+		'sender_verification_legacy',
+		'2fa_exempt',
+		'2fa_required'
+	)
+
+	observer = @(
+		'alerts.read',
+		'asm.groups.read',
+		'billing.read',
+		'ips.warmup.read',
+		'ips.pools.read',
+		'ips.pools.ips.read',
+		'ips.assigned.read',
+		'ips.read',
+		'mail_settings.read',
+		'mail_settings.bcc.read',
+		'mail_settings.address_whitelist.read',
+		'mail_settings.footer.read',
+		'mail_settings.forward_spam.read',
+		'mail_settings.plain_content.read',
+		'mail_settings.spam_check.read',
+		'mail_settings.bounce_purge.update',
+		'mail_settings.forward_bounce.read',
+		'partner_settings.read',
+		'partner_settings.new_relic.read',
+		'partner_settings.sendwithus.read',
+		'tracking_settings.read',
+		'tracking_settings.click.read',
+		'tracking_settings.subscription.read',
+		'tracking_settings.open.read',
+		'tracking_settings.google_analytics.read',
+		'user.webhooks.event.settings.read',
+		'user.webhooks.event.test.read',
+		'user.webhooks.parse.settings.read',
+		'stats.read',
+		'stats.global.read',
+		'categories.stats.read',
+		'categories.stats.sums.read',
+		'devices.stats.read',
+		'clients.stats.read',
+		'clients.phone.stats.read',
+		'clients.tablet.stats.read',
+		'clients.webmail.stats.read',
+		'clients.desktop.stats.read',
+		'geo.stats.read',
+		'mailbox_providers.stats.read',
+		'browsers.stats.read',
+		'subusers.stats.read',
+		'subusers.stats.sums.read',
+		'subusers.stats.monthly.read',
+		'user.webhooks.parse.stats.read',
+		'subusers.read',
+		'subusers.monitor.read',
+		'subusers.credits.read',
+		'subusers.credits.remaining.read',
+		'subusers.reputations.read',
+		'subusers.summary.read',
+		'templates.read',
+		'templates.versions.read',
+		'user.account.read',
+		'user.credits.read',
+		'user.email.read',
+		'user.profile.read',
+		'user.profile.update',
+		'user.timezone.read',
+		'user.username.read',
+		'user.settings.enforced_tls.read',
+		'api_keys.read',
+		'categories.read',
+		'mail_settings.template.read',
+		'mail.batch.read',
+		'user.scheduled_sends.read',
+		'access_settings.whitelist.read',
+		'access_settings.activity.read',
+		'suppression.read',
+		'messages.read',
+		'email_testing.read',
+		'sender_verification_eligible',
+		'sender_verification_legacy',
+		'2fa_exempt',
+		'2fa_required'
+	)
+}
+
+# Scopes SendGrid accepts on a subuser_access entry with permission_type = restricted.
+# This is a different (smaller) list than the parent persona scopes. Source:
+# https://support.sendgrid.com/hc/en-us/articles/27274820796059-Twilio-SendGrid-SSO-Teammate-Permissions-for-a-Subuser
+$SendGridSubuserRestrictedScopes = @(
+	'access_settings.activity.read',
+	'access_settings.whitelist.create',
+	'access_settings.whitelist.delete',
+	'access_settings.whitelist.read',
+	'access_settings.whitelist.update',
+	'alerts.create',
+	'alerts.delete',
+	'alerts.read',
+	'alerts.update',
+	'api_keys.create',
+	'api_keys.delete',
+	'api_keys.read',
+	'api_keys.update',
+	'asm.groups.create',
+	'asm.groups.delete',
+	'asm.groups.read',
+	'asm.groups.suppressions.create',
+	'asm.groups.suppressions.delete',
+	'asm.groups.suppressions.read',
+	'asm.groups.suppressions.update',
+	'asm.groups.update',
+	'asm.suppressions.global.create',
+	'asm.suppressions.global.delete',
+	'asm.suppressions.global.read',
+	'asm.suppressions.global.update',
+	'browsers.stats.read',
+	'categories.create',
+	'categories.delete',
+	'categories.read',
+	'categories.stats.read',
+	'categories.stats.sums.read',
+	'categories.update',
+	'clients.desktop.stats.read',
+	'clients.phone.stats.read',
+	'clients.stats.read',
+	'clients.tablet.stats.read',
+	'clients.webmail.stats.read',
+	'credentials.create',
+	'credentials.delete',
+	'credentials.read',
+	'credentials.update',
+	'design_library.create',
+	'design_library.delete',
+	'design_library.read',
+	'design_library.update',
+	'devices.stats.read',
+	'di.bounce_block_classification.read',
+	'email_testing.read',
+	'email_testing.write',
+	'geo.stats.read',
+	'ips.assigned.read',
+	'ips.pools.create',
+	'ips.pools.delete',
+	'ips.pools.ips.create',
+	'ips.pools.ips.delete',
+	'ips.pools.ips.read',
+	'ips.pools.ips.update',
+	'ips.pools.read',
+	'ips.pools.update',
+	'ips.warmup.create',
+	'ips.warmup.delete',
+	'ips.warmup.read',
+	'ips.warmup.update',
+	'mail.batch.create',
+	'mail.batch.delete',
+	'mail.batch.read',
+	'mail.batch.update',
+	'mail.send',
+	'mail_settings.address_whitelist.create',
+	'mail_settings.address_whitelist.delete',
+	'mail_settings.address_whitelist.read',
+	'mail_settings.address_whitelist.update',
+	'mail_settings.bcc.create',
+	'mail_settings.bcc.delete',
+	'mail_settings.bcc.read',
+	'mail_settings.bcc.update',
+	'mail_settings.bounce_purge.create',
+	'mail_settings.bounce_purge.delete',
+	'mail_settings.bounce_purge.read',
+	'mail_settings.bounce_purge.update',
+	'mail_settings.footer.create',
+	'mail_settings.footer.delete',
+	'mail_settings.footer.read',
+	'mail_settings.footer.update',
+	'mail_settings.forward_bounce.create',
+	'mail_settings.forward_bounce.delete',
+	'mail_settings.forward_bounce.read',
+	'mail_settings.forward_bounce.update',
+	'mail_settings.forward_spam.create',
+	'mail_settings.forward_spam.delete',
+	'mail_settings.forward_spam.read',
+	'mail_settings.forward_spam.update',
+	'mail_settings.plain_content.create',
+	'mail_settings.plain_content.delete',
+	'mail_settings.plain_content.read',
+	'mail_settings.plain_content.update',
+	'mail_settings.read',
+	'mail_settings.spam_check.create',
+	'mail_settings.spam_check.delete',
+	'mail_settings.spam_check.read',
+	'mail_settings.spam_check.update',
+	'mail_settings.template.create',
+	'mail_settings.template.delete',
+	'mail_settings.template.read',
+	'mail_settings.template.update',
+	'mailbox_providers.stats.read',
+	'marketing_campaigns.create',
+	'marketing_campaigns.delete',
+	'marketing_campaigns.read',
+	'marketing_campaigns.update',
+	'marketing.read',
+	'marketing.automation.read',
+	'messages.read',
+	'partner_settings.new_relic.create',
+	'partner_settings.new_relic.delete',
+	'partner_settings.new_relic.read',
+	'partner_settings.new_relic.update',
+	'partner_settings.read',
+	'partner_settings.sendwithus.create',
+	'partner_settings.sendwithus.delete',
+	'partner_settings.sendwithus.read',
+	'partner_settings.sendwithus.update',
+	'recipients.erasejob.create',
+	'recipients.erasejob.read',
+	'stats.global.read',
+	'stats.read',
+	'suppression.blocks.create',
+	'suppression.blocks.delete',
+	'suppression.blocks.read',
+	'suppression.blocks.update',
+	'suppression.bounces.create',
+	'suppression.bounces.delete',
+	'suppression.bounces.read',
+	'suppression.bounces.update',
+	'suppression.create',
+	'suppression.delete',
+	'suppression.invalid_emails.create',
+	'suppression.invalid_emails.delete',
+	'suppression.invalid_emails.read',
+	'suppression.invalid_emails.update',
+	'suppression.read',
+	'suppression.spam_reports.create',
+	'suppression.spam_reports.delete',
+	'suppression.spam_reports.read',
+	'suppression.spam_reports.update',
+	'suppression.unsubscribes.create',
+	'suppression.unsubscribes.delete',
+	'suppression.unsubscribes.read',
+	'suppression.unsubscribes.update',
+	'suppression.update',
+	'templates.create',
+	'templates.delete',
+	'templates.read',
+	'templates.update',
+	'templates.versions.activate.create',
+	'templates.versions.activate.delete',
+	'templates.versions.activate.read',
+	'templates.versions.activate.update',
+	'templates.versions.create',
+	'templates.versions.delete',
+	'templates.versions.read',
+	'templates.versions.update',
+	'tracking_settings.click.create',
+	'tracking_settings.click.delete',
+	'tracking_settings.click.read',
+	'tracking_settings.click.update',
+	'tracking_settings.google_analytics.create',
+	'tracking_settings.google_analytics.delete',
+	'tracking_settings.google_analytics.read',
+	'tracking_settings.google_analytics.update',
+	'tracking_settings.open.create',
+	'tracking_settings.open.delete',
+	'tracking_settings.open.read',
+	'tracking_settings.open.update',
+	'tracking_settings.read',
+	'tracking_settings.subscription.create',
+	'tracking_settings.subscription.delete',
+	'tracking_settings.subscription.read',
+	'tracking_settings.subscription.update',
+	'user.account.read',
+	'user.credits.read',
+	'user.email.read',
+	'user.scheduled_sends.create',
+	'user.scheduled_sends.delete',
+	'user.scheduled_sends.read',
+	'user.scheduled_sends.update',
+	'user.settings.enforced_tls.read',
+	'user.settings.enforced_tls.update',
+	'user.timezone.create',
+	'user.timezone.delete',
+	'user.timezone.read',
+	'user.timezone.update',
+	'user.username.read',
+	'user.webhooks.event.settings.create',
+	'user.webhooks.event.settings.delete',
+	'user.webhooks.event.settings.read',
+	'user.webhooks.event.settings.update',
+	'user.webhooks.event.test.create',
+	'user.webhooks.event.test.delete',
+	'user.webhooks.event.test.read',
+	'user.webhooks.event.test.update',
+	'user.webhooks.parse.settings.create',
+	'user.webhooks.parse.settings.delete',
+	'user.webhooks.parse.settings.read',
+	'user.webhooks.parse.settings.update',
+	'user.webhooks.parse.stats.read',
+	'whitelabel.create',
+	'whitelabel.delete',
+	'whitelabel.read',
+	'whitelabel.update'
+)
+
+# Subuser persona templates: persona scopes limited to what restricted subuser_access accepts.
+# These are the scope payloads used for permission_type = restricted entries.
+$SendGridSubuserPersonaScopes = [ordered]@{}
+$SendGridSubuserPersonaDroppedScopes = [ordered]@{}
+$subuserAllowedScopeSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+foreach ($allowedScope in $SendGridSubuserRestrictedScopes) {
+	[void]$subuserAllowedScopeSet.Add($allowedScope)
+}
+foreach ($personaKey in @($SendGridPersonaScopes.Keys)) {
+	$SendGridSubuserPersonaScopes[$personaKey] = @($SendGridPersonaScopes[$personaKey] | Where-Object { $subuserAllowedScopeSet.Contains($_) })
+	$SendGridSubuserPersonaDroppedScopes[$personaKey] = @($SendGridPersonaScopes[$personaKey] | Where-Object { -not $subuserAllowedScopeSet.Contains($_) })
+}
+
+function Get-SendGridAdminRoleSpec {
+	[CmdletBinding()]
+	param()
+
+	return [pscustomobject]$SendGridRoleSpec.Admin
+}
+
+function Get-SendGridAdminReadOnlyRoleSpec {
+	[CmdletBinding()]
+	param()
+
+	return [pscustomobject]$SendGridRoleSpec.AdminReadOnly
+}
+
+function Get-SendGridPersonaScopes {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory)]
+		[ValidateSet('accountant', 'developer', 'marketer', 'observer')]
+		[string]$Persona,
+
+		# Parent = documented persona list. Subuser = payload for a restricted subuser_access entry.
+		[ValidateSet('Parent', 'Subuser')]
+		[string]$Scope = 'Parent'
+	)
+
+	$key = $Persona.ToLowerInvariant()
+	if ($Scope -eq 'Subuser') {
+		return @($SendGridSubuserPersonaScopes[$key])
+	}
+
+	return @($SendGridPersonaScopes[$key])
+}
+
+function Get-SupportedPersonaSlugs {
+	[CmdletBinding()]
+	param()
+
+	return @($SendGridPersonaScopes.Keys | Sort-Object)
+}
+
+function Resolve-SendGridRoleFromGroupName {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory)]
+		[string]$GroupName
+	)
+
+	$groupNameNormalized = $GroupName.Trim().ToLowerInvariant()
+
+	if ($groupNameNormalized -eq $SendGridRoleSpec.Admin.GroupName) {
+		return [pscustomobject]@{
+			RoleKey        = $SendGridRoleSpec.Admin.Key
+			GroupName      = $groupNameNormalized
+			AccessTarget   = $SendGridRoleSpec.Admin.AccessTarget
+			Subuser        = $null
+			Role           = 'admin'
+			PermissionType = $null
+			Persona        = $null
+		}
+	}
+
+	if ($groupNameNormalized -eq $SendGridRoleSpec.AdminReadOnly.GroupName) {
+		return [pscustomobject]@{
+			RoleKey        = $SendGridRoleSpec.AdminReadOnly.Key
+			GroupName      = $groupNameNormalized
+			AccessTarget   = $SendGridRoleSpec.AdminReadOnly.AccessTarget
+			Subuser        = $null
+			Role           = $SendGridRoleSpec.AdminReadOnly.PersonaSlug
+			PermissionType = $null
+			Persona        = $SendGridRoleSpec.AdminReadOnly.PersonaSlug
+		}
+	}
+
+	$groupPattern = [string]$SendGridRoleSpec.SubuserAccess.GroupPattern
+	$match = [regex]::Match($groupNameNormalized, $groupPattern)
+
+	if (-not $match.Success) {
+		return $null
+	}
+
+	$role = $match.Groups['Role'].Value
+	$isSubuserAdmin = ($role -eq 'admin')
+
+	return [pscustomobject]@{
+		RoleKey        = $SendGridRoleSpec.SubuserAccess.Key
+		GroupName      = $groupNameNormalized
+		AccessTarget   = $SendGridRoleSpec.SubuserAccess.AccessTarget
+		Subuser        = $match.Groups['Subuser'].Value
+		Role           = $role
+		PermissionType = if ($isSubuserAdmin) { 'admin' } else { 'restricted' }
+		Persona        = if ($isSubuserAdmin) { $null } else { $role }
+	}
+}
+
