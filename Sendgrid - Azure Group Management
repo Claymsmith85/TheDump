@@ -1,124 +1,93 @@
 # -----------------------------------------------------------------------------
-# SendGrid Azure Group Management (Planning Scaffold)
+# SendGrid Azure Group Management (Phase 1: read-only inventory + WhatIf)
 # -----------------------------------------------------------------------------
 # Purpose
-# - Move SendGrid access management to Entra ID (Azure AD) group-driven sync.
-# - This script will eventually read group membership from Graph and enforce
-#   matching teammate/subuser access in SendGrid.
+# - Move SendGrid access management to Entra ID group-driven sync.
+# - Source of truth: Entra groups.
+# - Target: SendGrid SSO Teammates on the PARENT account. Per-Subuser access is
+#   granted through the teammate's subuser_access list, never by creating
+#   teammates inside a Subuser.
 #
 # Current state
-# - Planning/comments only. No operational code yet.
+# - Read-only inventory and WhatIf group plan. The only write path is teammate
+#   removal, gated behind $ApplySendGridRemovals.
 #
-# Core model
-# - Source of truth: Entra groups.
-# - Target system: SendGrid teammates + subuser persona scopes.
-# - Sync strategy: idempotent reconciliation (desired state vs actual state).
+# Access model (parent-managed)
+# - Every person is exactly one SSO Teammate on the parent account.
+# - SendGrid constraint: a non-admin Teammate is EITHER parent-scoped (scopes on
+#   the parent, no subuser_access) OR subuser-scoped (has_restricted_subuser_access
+#   = true, one subuser_access entry per Subuser, no parent scopes). The two
+#   cannot be combined on one Teammate.
 #
 # Access categories
-# 1) Account Admin
-#    - Access to everything and all subusers.
-#    - Group: cs-sendgrid-admin
+# 1) Account Admin       cs-sendgrid-admin             -> is_admin = true
+# 2) Account Read-Only   cs-sendgrid-admin-ro          -> parent Observer scopes,
+#                                                        no subuser_access (see note)
+# 3) Subuser access      cs-sendgrid-<subuser>-<role>  -> one subuser_access entry:
+#      role = admin                                      permission_type = admin
+#      role = accountant|developer|marketer|observer     permission_type = restricted,
+#                                                        scopes = subuser persona template
 #
-# 2) Account Read-Only
-#    - Read-only on main account and all subusers.
-#    - Group: cs-sendgrid-admin-ro
+# Note on admin-ro: parent scopes and subuser_access are mutually exclusive, so
+# "read-only on the parent AND inside every Subuser" cannot be one Teammate.
+# This spec models admin-ro as parent Observer (parent views include Subuser
+# lists and stats). The alternative — restricted Observer access on every
+# Subuser, kept current by the reconciler — is an open decision (see below).
 #
-# 3) Subuser Persona Access
-#    - Scoped access per subuser and per persona.
-#    - Group format: cs-sendgrid-$Subuser-$Persona
-#    - Persona scopes reference:
-#      https://www.twilio.com/docs/sendgrid/ui/account-and-settings/teammate-permissions#persona-scopes
+# Persona templates
+# - Parent personas use the documented persona scope lists ($SendGridPersonaScopes).
+# - Restricted subuser_access accepts a different, smaller scope list. Subuser
+#   templates are computed at load as: persona list INTERSECT
+#   $SendGridSubuserRestrictedScopes. Dropped scopes are printed at startup.
 #
-# Proposed naming conventions
-# - Normalize subuser token from SendGrid username (or canonical key).
-# - Normalize persona token to a stable slug (lowercase, hyphen-safe).
-# - Final group key is case-insensitive for matching.
+# Sync flow
+# 1) Bootstrap/auth (Delinea -> SendGrid API key + Graph certificate).
+# 2) Desired state from Graph: members of the role groups.
+# 3) Current state from SendGrid, parent account only:
+#    - GET /v3/teammates                              list (no scopes in the list)
+#    - GET /v3/teammates/{username}/subuser_access    subuser-scoped teammates
+#    - GET /v3/teammates/{username}                   parent-scoped teammates
+# 4) Reconcile (Phase 2+):
+#    - Create: POST  /v3/sso/teammates  with has_restricted_subuser_access + subuser_access
+#    - Update: PATCH /v3/sso/teammates/{username} with the FULL desired subuser_access list
+#    - Remove: DELETE /v3/teammates/{username}
+# 5) Legacy: teammates that exist inside a Subuser (created on-behalf-of) are
+#    inventoried, mapped to groups, and flagged for migration: recreate at the
+#    parent with subuser_access, then delete the Subuser-context teammate.
 #
-# Examples
-# - cs-sendgrid-admin
-# - cs-sendgrid-admin-ro
-# - cs-sendgrid-marketing-prod-analyst
-# - cs-sendgrid-support-emea-developer
+# Conflict rules
+# - admin > admin-ro > subuser access. Admin ignores all other groups.
+# - admin-ro together with any subuser group is a conflict (cannot coexist on
+#   one Teammate): warn, apply nothing for that user.
+# - Unknown subuser/persona in a group name: warn and continue.
+# - Teammate with custom (non-persona) scopes: warn only; never auto-mapped.
 #
-# High-level sync flow (future implementation)
-# 1) Bootstrap/auth
-#    - Resolve ScriptDir, load local variables and shared auth helpers.
-#    - Connect to Graph (app-only cert auth pattern in this repo).
-#    - Connect to SendGrid via shared SendGrid API function wrappers.
+# Identity
+# - SSO Teammate username == email and must match the IdP claim.
+# - Primary key: Entra UPN (lowercase, trimmed). Fallback: mail. No display-name matching.
 #
-# 2) Discover desired state from Graph
-#    - Query members of:
-#      - cs-sendgrid-admin
-#      - cs-sendgrid-admin-ro
-#      - all cs-sendgrid-<subuser>-<persona> groups
-#    - Expand users to canonical identity key (UPN only).
+# Guardrails (Phase 2+)
+# - -WhatIf / dry-run first class; explicit confirmation for removals.
+# - Optional allowlist of target groups; optional denylist of protected teammates.
+# - Retry/backoff for Graph and SendGrid throttling; no secrets in logs.
 #
-# 3) Discover current state from SendGrid
-#    - Enumerate teammates on the parent account for account-level admin/admin-ro.
-#    - Enumerate teammates in each subuser context via on-behalf-of for subuser personas.
-#
-# 4) Build reconciliation model
-#    - Desired assignments by user:
-#      - account role: admin | admin-ro | none
-#      - subuser persona list: [{ subuser, persona }...]
-#    - Current assignments by user from SendGrid.
-#
-# 5) Reconcile changes (idempotent)
-#    - Create SSO teammates directly in the target subuser context (on-behalf-of).
-#    - Update teammate role/persona scopes in that same subuser context.
-#    - Remove stale scopes.
-#    - Optional: deactivate/remove teammate when no assignments remain.
-#
-# 6) Reporting
-#    - Summarize adds/updates/removals/no-change.
-#    - Emit warnings for unknown groups/personas/subusers.
-#    - Dry-run mode should print proposed actions only.
-#
-# Conflict handling rules (proposed)
-# - If user is in both admin and admin-ro groups, admin wins.
-# - If user has admin, subuser persona group assignments are redundant and
-#   should be ignored (or logged as informational) unless business rules say
-#   otherwise.
-# - If group references unknown subuser/persona, do not fail whole run;
-#   record warning and continue.
-#
-# Identity and matching rules (proposed)
-# - Primary user key: UPN (lowercase, trimmed).
-# - Secondary fallback: mail.
-# - Avoid display-name matching.
-# - Keep a deterministic map between Entra user and SendGrid teammate identity.
-#
-# Guardrails and safety (future requirements)
-# - Support -WhatIf / dry-run first-class behavior.
-# - Explicit confirmation for destructive removals outside dry-run.
-# - Optional allowlist for target groups.
-# - Optional denylist for protected teammates.
-# - Retry/backoff for Graph and SendGrid transient API failures.
-#
-# Operational concerns
-# - Respect SendGrid and Graph API throttling.
-# - Batch/paginate reads where possible.
-# - Keep secret material in memory only.
-# - Do not write API keys or sensitive payloads to logs.
-#
-# Open design questions to finalize before coding
-# - Exact mapping table for each persona slug -> SendGrid persona scope payload.
-# - Whether "admin-ro" should map to SendGrid built-in role or custom scopes.
-# - Whether orphaned teammates should be removed or only disabled.
-# - Required exception process for one-off manual access.
+# Open design questions
+# - admin-ro: parent Observer (current) vs restricted Observer on all Subusers.
+# - Baseline groups: pre-create every <subuser>-<role> group (current) vs create on demand.
+# - Orphaned teammates: remove vs disable; exception process for one-off manual access.
 # - Notification channel for reconciliation changes/failures.
 #
-# Suggested implementation phases
-# Phase 1: Read-only inventory and diff report.
-# Phase 2: Create/update teammate role and subuser persona assignments.
-# Phase 3: Safe cleanup/removal workflow with approvals.
-# Phase 4: Scheduled automation + monitoring/alerting.
+# Phases
+# Phase 1 (this file): inventory + WhatIf group plan + removal candidates.
+# Phase 2: create/update parent teammates (subuser_access) from group membership.
+# Phase 3: migrate legacy Subuser-context teammates; approved removals.
+# Phase 4: scheduled run + monitoring/alerting.
 # -----------------------------------------------------------------------------
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Role/spec catalog only. Reconciliation code will consume these definitions later.
+# Role/spec catalog. Reconciliation code (Phase 2+) consumes these definitions.
 $SendGridRoleSpec = [ordered]@{
 	GroupPrefix = 'cs-sendgrid-'
 
@@ -128,7 +97,7 @@ $SendGridRoleSpec = [ordered]@{
 		RoleKind     = 'administrator'
 		AccessTarget = 'main-and-all-subusers'
 		Precedence   = 300
-		Notes        = 'Maps to SendGrid admin teammate role (all scopes).'
+		Notes        = 'is_admin = true on the parent SSO teammate (all scopes).'
 	}
 
 	AdminReadOnly = [ordered]@{
@@ -136,23 +105,23 @@ $SendGridRoleSpec = [ordered]@{
 		GroupName    = 'cs-sendgrid-admin-ro'
 		RoleKind     = 'persona'
 		PersonaSlug  = 'observer'
-		AccessTarget = 'main-and-all-subusers'
+		AccessTarget = 'parent'
 		Precedence   = 200
-		Notes        = 'Read-only baseline mapped to Observer persona unless overridden.'
+		Notes        = 'Observer persona scopes on the parent. Cannot be combined with subuser_access.'
 	}
 
-	SubuserPersona = [ordered]@{
-		Key          = 'subuser-persona'
-		RoleKind     = 'persona'
+	SubuserAccess = [ordered]@{
+		Key          = 'subuser-access'
+		RoleKind     = 'subuser_access'
 		AccessTarget = 'single-subuser'
 		Precedence   = 100
-		# Format: cs-sendgrid-<subuser>-<persona>
-		# Supported persona slugs are constrained to the keys in $SendGridPersonaScopes.
-		GroupPattern = '^(?i)cs-sendgrid-(?<Subuser>[a-z0-9][a-z0-9-]*)-(?<Persona>accountant|developer|marketer|observer)$'
+		# Format: cs-sendgrid-<subuser>-<role>
+		# role 'admin' -> permission_type admin; persona slugs -> permission_type restricted.
+		GroupPattern = '^(?i)cs-sendgrid-(?<Subuser>[a-z0-9][a-z0-9-]*)-(?<Role>admin|accountant|developer|marketer|observer)$'
 	}
 }
 
-# Twilio SendGrid persona scopes source:
+# Twilio SendGrid persona scopes (parent account) source:
 # https://www.twilio.com/docs/sendgrid/ui/account-and-settings/teammate-permissions#persona-scopes
 $SendGridPersonaScopes = [ordered]@{
 	accountant = @(
@@ -484,6 +453,235 @@ $SendGridPersonaScopes = [ordered]@{
 	)
 }
 
+# Scopes SendGrid accepts on a subuser_access entry with permission_type = restricted.
+# This is a different (smaller) list than the parent persona scopes. Source:
+# https://support.sendgrid.com/hc/en-us/articles/27274820796059-Twilio-SendGrid-SSO-Teammate-Permissions-for-a-Subuser
+$SendGridSubuserRestrictedScopes = @(
+	'access_settings.activity.read',
+	'access_settings.whitelist.create',
+	'access_settings.whitelist.delete',
+	'access_settings.whitelist.read',
+	'access_settings.whitelist.update',
+	'alerts.create',
+	'alerts.delete',
+	'alerts.read',
+	'alerts.update',
+	'api_keys.create',
+	'api_keys.delete',
+	'api_keys.read',
+	'api_keys.update',
+	'asm.groups.create',
+	'asm.groups.delete',
+	'asm.groups.read',
+	'asm.groups.suppressions.create',
+	'asm.groups.suppressions.delete',
+	'asm.groups.suppressions.read',
+	'asm.groups.suppressions.update',
+	'asm.groups.update',
+	'asm.suppressions.global.create',
+	'asm.suppressions.global.delete',
+	'asm.suppressions.global.read',
+	'asm.suppressions.global.update',
+	'browsers.stats.read',
+	'categories.create',
+	'categories.delete',
+	'categories.read',
+	'categories.stats.read',
+	'categories.stats.sums.read',
+	'categories.update',
+	'clients.desktop.stats.read',
+	'clients.phone.stats.read',
+	'clients.stats.read',
+	'clients.tablet.stats.read',
+	'clients.webmail.stats.read',
+	'credentials.create',
+	'credentials.delete',
+	'credentials.read',
+	'credentials.update',
+	'design_library.create',
+	'design_library.delete',
+	'design_library.read',
+	'design_library.update',
+	'devices.stats.read',
+	'di.bounce_block_classification.read',
+	'email_testing.read',
+	'email_testing.write',
+	'geo.stats.read',
+	'ips.assigned.read',
+	'ips.pools.create',
+	'ips.pools.delete',
+	'ips.pools.ips.create',
+	'ips.pools.ips.delete',
+	'ips.pools.ips.read',
+	'ips.pools.ips.update',
+	'ips.pools.read',
+	'ips.pools.update',
+	'ips.warmup.create',
+	'ips.warmup.delete',
+	'ips.warmup.read',
+	'ips.warmup.update',
+	'mail.batch.create',
+	'mail.batch.delete',
+	'mail.batch.read',
+	'mail.batch.update',
+	'mail.send',
+	'mail_settings.address_whitelist.create',
+	'mail_settings.address_whitelist.delete',
+	'mail_settings.address_whitelist.read',
+	'mail_settings.address_whitelist.update',
+	'mail_settings.bcc.create',
+	'mail_settings.bcc.delete',
+	'mail_settings.bcc.read',
+	'mail_settings.bcc.update',
+	'mail_settings.bounce_purge.create',
+	'mail_settings.bounce_purge.delete',
+	'mail_settings.bounce_purge.read',
+	'mail_settings.bounce_purge.update',
+	'mail_settings.footer.create',
+	'mail_settings.footer.delete',
+	'mail_settings.footer.read',
+	'mail_settings.footer.update',
+	'mail_settings.forward_bounce.create',
+	'mail_settings.forward_bounce.delete',
+	'mail_settings.forward_bounce.read',
+	'mail_settings.forward_bounce.update',
+	'mail_settings.forward_spam.create',
+	'mail_settings.forward_spam.delete',
+	'mail_settings.forward_spam.read',
+	'mail_settings.forward_spam.update',
+	'mail_settings.plain_content.create',
+	'mail_settings.plain_content.delete',
+	'mail_settings.plain_content.read',
+	'mail_settings.plain_content.update',
+	'mail_settings.read',
+	'mail_settings.spam_check.create',
+	'mail_settings.spam_check.delete',
+	'mail_settings.spam_check.read',
+	'mail_settings.spam_check.update',
+	'mail_settings.template.create',
+	'mail_settings.template.delete',
+	'mail_settings.template.read',
+	'mail_settings.template.update',
+	'mailbox_providers.stats.read',
+	'marketing_campaigns.create',
+	'marketing_campaigns.delete',
+	'marketing_campaigns.read',
+	'marketing_campaigns.update',
+	'marketing.read',
+	'marketing.automation.read',
+	'messages.read',
+	'partner_settings.new_relic.create',
+	'partner_settings.new_relic.delete',
+	'partner_settings.new_relic.read',
+	'partner_settings.new_relic.update',
+	'partner_settings.read',
+	'partner_settings.sendwithus.create',
+	'partner_settings.sendwithus.delete',
+	'partner_settings.sendwithus.read',
+	'partner_settings.sendwithus.update',
+	'recipients.erasejob.create',
+	'recipients.erasejob.read',
+	'stats.global.read',
+	'stats.read',
+	'suppression.blocks.create',
+	'suppression.blocks.delete',
+	'suppression.blocks.read',
+	'suppression.blocks.update',
+	'suppression.bounces.create',
+	'suppression.bounces.delete',
+	'suppression.bounces.read',
+	'suppression.bounces.update',
+	'suppression.create',
+	'suppression.delete',
+	'suppression.invalid_emails.create',
+	'suppression.invalid_emails.delete',
+	'suppression.invalid_emails.read',
+	'suppression.invalid_emails.update',
+	'suppression.read',
+	'suppression.spam_reports.create',
+	'suppression.spam_reports.delete',
+	'suppression.spam_reports.read',
+	'suppression.spam_reports.update',
+	'suppression.unsubscribes.create',
+	'suppression.unsubscribes.delete',
+	'suppression.unsubscribes.read',
+	'suppression.unsubscribes.update',
+	'suppression.update',
+	'templates.create',
+	'templates.delete',
+	'templates.read',
+	'templates.update',
+	'templates.versions.activate.create',
+	'templates.versions.activate.delete',
+	'templates.versions.activate.read',
+	'templates.versions.activate.update',
+	'templates.versions.create',
+	'templates.versions.delete',
+	'templates.versions.read',
+	'templates.versions.update',
+	'tracking_settings.click.create',
+	'tracking_settings.click.delete',
+	'tracking_settings.click.read',
+	'tracking_settings.click.update',
+	'tracking_settings.google_analytics.create',
+	'tracking_settings.google_analytics.delete',
+	'tracking_settings.google_analytics.read',
+	'tracking_settings.google_analytics.update',
+	'tracking_settings.open.create',
+	'tracking_settings.open.delete',
+	'tracking_settings.open.read',
+	'tracking_settings.open.update',
+	'tracking_settings.read',
+	'tracking_settings.subscription.create',
+	'tracking_settings.subscription.delete',
+	'tracking_settings.subscription.read',
+	'tracking_settings.subscription.update',
+	'user.account.read',
+	'user.credits.read',
+	'user.email.read',
+	'user.scheduled_sends.create',
+	'user.scheduled_sends.delete',
+	'user.scheduled_sends.read',
+	'user.scheduled_sends.update',
+	'user.settings.enforced_tls.read',
+	'user.settings.enforced_tls.update',
+	'user.timezone.create',
+	'user.timezone.delete',
+	'user.timezone.read',
+	'user.timezone.update',
+	'user.username.read',
+	'user.webhooks.event.settings.create',
+	'user.webhooks.event.settings.delete',
+	'user.webhooks.event.settings.read',
+	'user.webhooks.event.settings.update',
+	'user.webhooks.event.test.create',
+	'user.webhooks.event.test.delete',
+	'user.webhooks.event.test.read',
+	'user.webhooks.event.test.update',
+	'user.webhooks.parse.settings.create',
+	'user.webhooks.parse.settings.delete',
+	'user.webhooks.parse.settings.read',
+	'user.webhooks.parse.settings.update',
+	'user.webhooks.parse.stats.read',
+	'whitelabel.create',
+	'whitelabel.delete',
+	'whitelabel.read',
+	'whitelabel.update'
+)
+
+# Subuser persona templates: persona scopes limited to what restricted subuser_access accepts.
+# These are the scope payloads used for permission_type = restricted entries.
+$SendGridSubuserPersonaScopes = [ordered]@{}
+$SendGridSubuserPersonaDroppedScopes = [ordered]@{}
+$subuserAllowedScopeSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+foreach ($allowedScope in $SendGridSubuserRestrictedScopes) {
+	[void]$subuserAllowedScopeSet.Add($allowedScope)
+}
+foreach ($personaKey in @($SendGridPersonaScopes.Keys)) {
+	$SendGridSubuserPersonaScopes[$personaKey] = @($SendGridPersonaScopes[$personaKey] | Where-Object { $subuserAllowedScopeSet.Contains($_) })
+	$SendGridSubuserPersonaDroppedScopes[$personaKey] = @($SendGridPersonaScopes[$personaKey] | Where-Object { -not $subuserAllowedScopeSet.Contains($_) })
+}
+
 function Get-SendGridAdminRoleSpec {
 	[CmdletBinding()]
 	param()
@@ -503,10 +701,26 @@ function Get-SendGridPersonaScopes {
 	param(
 		[Parameter(Mandatory)]
 		[ValidateSet('accountant', 'developer', 'marketer', 'observer')]
-		[string]$Persona
+		[string]$Persona,
+
+		# Parent = documented persona list. Subuser = payload for a restricted subuser_access entry.
+		[ValidateSet('Parent', 'Subuser')]
+		[string]$Scope = 'Parent'
 	)
 
-	return @($SendGridPersonaScopes[$Persona.ToLowerInvariant()])
+	$key = $Persona.ToLowerInvariant()
+	if ($Scope -eq 'Subuser') {
+		return @($SendGridSubuserPersonaScopes[$key])
+	}
+
+	return @($SendGridPersonaScopes[$key])
+}
+
+function Get-SupportedPersonaSlugs {
+	[CmdletBinding()]
+	param()
+
+	return @($SendGridPersonaScopes.Keys | Sort-Object)
 }
 
 function Resolve-SendGridRoleFromGroupName {
@@ -520,37 +734,46 @@ function Resolve-SendGridRoleFromGroupName {
 
 	if ($groupNameNormalized -eq $SendGridRoleSpec.Admin.GroupName) {
 		return [pscustomobject]@{
-			RoleKey      = $SendGridRoleSpec.Admin.Key
-			GroupName    = $groupNameNormalized
-			AccessTarget = $SendGridRoleSpec.Admin.AccessTarget
-			Persona      = $null
-			Subuser      = $null
+			RoleKey        = $SendGridRoleSpec.Admin.Key
+			GroupName      = $groupNameNormalized
+			AccessTarget   = $SendGridRoleSpec.Admin.AccessTarget
+			Subuser        = $null
+			Role           = 'admin'
+			PermissionType = $null
+			Persona        = $null
 		}
 	}
 
 	if ($groupNameNormalized -eq $SendGridRoleSpec.AdminReadOnly.GroupName) {
 		return [pscustomobject]@{
-			RoleKey      = $SendGridRoleSpec.AdminReadOnly.Key
-			GroupName    = $groupNameNormalized
-			AccessTarget = $SendGridRoleSpec.AdminReadOnly.AccessTarget
-			Persona      = $SendGridRoleSpec.AdminReadOnly.PersonaSlug
-			Subuser      = $null
+			RoleKey        = $SendGridRoleSpec.AdminReadOnly.Key
+			GroupName      = $groupNameNormalized
+			AccessTarget   = $SendGridRoleSpec.AdminReadOnly.AccessTarget
+			Subuser        = $null
+			Role           = $SendGridRoleSpec.AdminReadOnly.PersonaSlug
+			PermissionType = $null
+			Persona        = $SendGridRoleSpec.AdminReadOnly.PersonaSlug
 		}
 	}
 
-	$groupPattern = [string]$SendGridRoleSpec.SubuserPersona.GroupPattern
+	$groupPattern = [string]$SendGridRoleSpec.SubuserAccess.GroupPattern
 	$match = [regex]::Match($groupNameNormalized, $groupPattern)
 
 	if (-not $match.Success) {
 		return $null
 	}
 
+	$role = $match.Groups['Role'].Value
+	$isSubuserAdmin = ($role -eq 'admin')
+
 	return [pscustomobject]@{
-		RoleKey      = $SendGridRoleSpec.SubuserPersona.Key
-		GroupName    = $groupNameNormalized
-		AccessTarget = $SendGridRoleSpec.SubuserPersona.AccessTarget
-		Persona      = $match.Groups['Persona'].Value
-		Subuser      = $match.Groups['Subuser'].Value
+		RoleKey        = $SendGridRoleSpec.SubuserAccess.Key
+		GroupName      = $groupNameNormalized
+		AccessTarget   = $SendGridRoleSpec.SubuserAccess.AccessTarget
+		Subuser        = $match.Groups['Subuser'].Value
+		Role           = $role
+		PermissionType = if ($isSubuserAdmin) { 'admin' } else { 'restricted' }
+		Persona        = if ($isSubuserAdmin) { $null } else { $role }
 	}
 }
 
@@ -566,7 +789,7 @@ $ApplySendGridRemovals = $false # Set $true to remove disabled/not-found users f
 # Resolve this script's folder whether run as a file (F5) or via "Run Selection" (F8)
 $ScriptDir = if ($PSScriptRoot) {
 	$PSScriptRoot
-} elseif ($psEditor) {
+} elseif (Get-Variable -Name psEditor -ErrorAction SilentlyContinue) {
 	Split-Path $psEditor.GetEditorContext().CurrentFile.Path
 } else {
 	$PWD.Path
@@ -600,6 +823,74 @@ function Get-OptionalObjectProperty {
 	return $Default
 }
 
+# --- SendGrid calls this phase needs beyond the shared wrapper ---------------
+# Both functions call Invoke-SendGridRequest from 'Sendgrid API Functions.ps1'.
+# Expected contract:
+#   Invoke-SendGridRequest -Client <client> -Method GET -Path '/v3/...' [-Query <hashtable>] [-OnBehalfOf <subuser>]
+#   -> parsed JSON object
+# If the shared file exposes its generic request function under another name or
+# signature, change only these two functions.
+
+function Get-SendGridTeammateSubuserAccess {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory)]
+		[object]$Client,
+		[Parameter(Mandatory)]
+		[string]$Username,
+		[int]$PageSize = 100
+	)
+
+	$entries = New-Object System.Collections.Generic.List[object]
+	$hasRestricted = $false
+	$afterSubuserId = $null
+	$path = '/v3/teammates/{0}/subuser_access' -f [uri]::EscapeDataString($Username)
+
+	do {
+		$query = @{ limit = $PageSize }
+		if ($null -ne $afterSubuserId) {
+			$query['after_subuser_id'] = $afterSubuserId
+		}
+
+		$response = Invoke-SendGridRequest -Client $Client -Method GET -Path $path -Query $query
+
+		$hasRestricted = [bool](Get-OptionalObjectProperty -InputObject $response -Name 'has_restricted_subuser_access' -Default $false)
+		foreach ($entry in @((Get-OptionalObjectProperty -InputObject $response -Name 'subuser_access' -Default @()))) {
+			if ($null -ne $entry) {
+				[void]$entries.Add($entry)
+			}
+		}
+
+		$metadata = Get-OptionalObjectProperty -InputObject $response -Name '_metadata' -Default $null
+		$afterSubuserId = Get-OptionalObjectProperty -InputObject $metadata -Name 'after_subuser_id' -Default $null
+	} while ($null -ne $afterSubuserId)
+
+	return [pscustomobject]@{
+		Username                   = $Username
+		HasRestrictedSubuserAccess = $hasRestricted
+		SubuserAccess              = $entries.ToArray()
+	}
+}
+
+function Get-SendGridTeammateDetail {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory)]
+		[object]$Client,
+		[Parameter(Mandatory)]
+		[string]$Username,
+		[string]$OnBehalfOf
+	)
+
+	$path = '/v3/teammates/{0}' -f [uri]::EscapeDataString($Username)
+
+	if (-not [string]::IsNullOrWhiteSpace($OnBehalfOf)) {
+		return Invoke-SendGridRequest -Client $Client -Method GET -Path $path -OnBehalfOf $OnBehalfOf
+	}
+
+	return Invoke-SendGridRequest -Client $Client -Method GET -Path $path
+}
+
 function ConvertTo-GroupToken {
 	[CmdletBinding()]
 	param(
@@ -620,43 +911,70 @@ function ConvertTo-GroupToken {
 }
 
 function Resolve-SendGridPersonaFromScopes {
+	# Matches an actual scope list to a persona template.
+	# Exact match wins. Otherwise the persona whose template is fully contained in
+	# the actual scopes with the fewest extras wins (SendGrid adds a minimum scope
+	# set of its own, so exact matches are not guaranteed). No match -> Persona = $null.
 	[CmdletBinding()]
 	param(
 		[string[]]$Scopes,
-		[string]$PermissionType
+
+		[ValidateSet('Parent', 'Subuser')]
+		[string]$Scope = 'Parent'
 	)
 
-	$ptype = [string]$PermissionType
-	if (-not [string]::IsNullOrWhiteSpace($ptype)) {
-		$ptype = $ptype.Trim().ToLowerInvariant()
+	$templates = if ($Scope -eq 'Subuser') { $SendGridSubuserPersonaScopes } else { $SendGridPersonaScopes }
 
-		# Deterministic fallbacks for common SendGrid subuser permission types.
-		switch ($ptype) {
-			'admin' { return 'developer' }
-			'restricted' { return 'observer' }
-			'read' { return 'observer' }
-			'readonly' { return 'observer' }
-			'read-only' { return 'observer' }
-		}
-
-		if ($SendGridPersonaScopes.Contains($ptype)) {
-			return $ptype
+	$actualSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+	foreach ($scopeName in @($Scopes)) {
+		if (-not [string]::IsNullOrWhiteSpace([string]$scopeName)) {
+			[void]$actualSet.Add(([string]$scopeName).Trim())
 		}
 	}
 
-	$normalizedScopes = @($Scopes | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.Trim().ToLowerInvariant() } | Sort-Object -Unique)
+	$noMatch = [pscustomobject]@{
+		Persona     = $null
+		MatchType   = 'none'
+		ExtraScopes = @()
+	}
 
-	if ($normalizedScopes.Count -gt 0) {
-		$inputKey = $normalizedScopes -join '|'
-		foreach ($persona in $SendGridPersonaScopes.Keys) {
-			$personaKey = (@($SendGridPersonaScopes[$persona] | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object -Unique) -join '|')
-			if ($personaKey -eq $inputKey) {
-				return $persona
+	if ($actualSet.Count -eq 0) {
+		return $noMatch
+	}
+
+	$best = $null
+	foreach ($persona in @($templates.Keys)) {
+		$template = @($templates[$persona])
+		if ($template.Count -eq 0) {
+			continue
+		}
+
+		$missing = @($template | Where-Object { -not $actualSet.Contains($_) })
+		if ($missing.Count -gt 0) {
+			continue
+		}
+
+		$templateSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+		foreach ($templateScope in $template) {
+			[void]$templateSet.Add($templateScope)
+		}
+
+		$extra = @($actualSet | Where-Object { -not $templateSet.Contains($_) } | Sort-Object)
+
+		if ($null -eq $best -or $extra.Count -lt @($best.ExtraScopes).Count) {
+			$best = [pscustomobject]@{
+				Persona     = $persona
+				MatchType   = if ($extra.Count -eq 0) { 'exact' } else { 'superset' }
+				ExtraScopes = $extra
 			}
 		}
 	}
 
-	return $null
+	if ($null -ne $best) {
+		return $best
+	}
+
+	return $noMatch
 }
 
 function Get-SendGridTeammateLookupKey {
@@ -710,6 +1028,45 @@ function Add-RequiredGroupEntry {
 	}
 }
 
+function Add-ParentManagedAccess {
+	# Records that a parent-account teammate already covers a subuser ('*' = all, via is_admin).
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory)]
+		[System.Collections.Generic.Dictionary[string, object]]$Map,
+		[Parameter(Mandatory)]
+		[string]$Email,
+		[Parameter(Mandatory)]
+		[string]$SubuserToken
+	)
+
+	$key = $Email.Trim().ToLowerInvariant()
+	if (-not $Map.ContainsKey($key)) {
+		$Map[$key] = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+	}
+
+	[void]$Map[$key].Add($SubuserToken)
+}
+
+function Test-ParentManagedAccess {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory)]
+		[System.Collections.Generic.Dictionary[string, object]]$Map,
+		[Parameter(Mandatory)]
+		[string]$Email,
+		[Parameter(Mandatory)]
+		[string]$SubuserToken
+	)
+
+	$key = $Email.Trim().ToLowerInvariant()
+	if (-not $Map.ContainsKey($key)) {
+		return $false
+	}
+
+	return ($Map[$key].Contains('*') -or $Map[$key].Contains($SubuserToken))
+}
+
 function Get-ExistingSendGridGroupsFromGraph {
 	[CmdletBinding()]
 	param(
@@ -728,7 +1085,7 @@ function Get-ExistingSendGridGroupsFromGraph {
 	}
 
 	return [pscustomobject]@{
-		Groups = $groups
+		Groups  = $groups
 		NameSet = $set
 	}
 }
@@ -754,6 +1111,7 @@ function Get-EntraGroupByDisplayNameExact {
 }
 
 function Get-EntraGroupMemberUpnSet {
+	# Direct user members only. One paged call instead of one Get-MgUser per member.
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory)]
@@ -761,35 +1119,17 @@ function Get-EntraGroupMemberUpnSet {
 	)
 
 	$set = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
-	$members = @(Get-MgGroupMember -GroupId $GroupId -All -Property Id)
+	$users = @(Get-MgGroupMemberAsUser -GroupId $GroupId -All -Property Id,UserPrincipalName)
 
-	foreach ($member in $members) {
-		$memberId = [string](Get-OptionalObjectProperty -InputObject $member -Name 'Id' -Default '')
-		if ([string]::IsNullOrWhiteSpace($memberId)) {
-			continue
-		}
-
-		try {
-			$user = Get-MgUser -UserId $memberId -Property UserPrincipalName
-			$upn = [string](Get-OptionalObjectProperty -InputObject $user -Name 'UserPrincipalName' -Default '')
-			if (-not [string]::IsNullOrWhiteSpace($upn)) {
-				[void]$set.Add($upn.Trim().ToLowerInvariant())
-			}
-		}
-		catch {
-			# Non-user directory objects are ignored for this membership check.
-			continue
+	foreach ($user in $users) {
+		$upn = [string](Get-OptionalObjectProperty -InputObject $user -Name 'UserPrincipalName' -Default '')
+		if (-not [string]::IsNullOrWhiteSpace($upn)) {
+			[void]$set.Add($upn.Trim().ToLowerInvariant())
 		}
 	}
 
-	return $set
-}
-
-function Get-SupportedPersonaSlugs {
-	[CmdletBinding()]
-	param()
-
-	return @($SendGridPersonaScopes.Keys | Sort-Object)
+	# Comma prevents PowerShell from unrolling the HashSet into the pipeline on return.
+	return ,$set
 }
 
 function Resolve-EntraUserStatusByEmail {
@@ -820,10 +1160,10 @@ function Resolve-EntraUserStatusByEmail {
 
 	if ($null -eq $user) {
 		$escaped = $normalized.Replace("'", "''")
-		$matches = @(Get-MgUser -Filter "mail eq '$escaped' or userPrincipalName eq '$escaped'" -All -Property Id,UserPrincipalName,Mail,AccountEnabled)
-		if ($matches.Count -gt 0) {
-			$exact = $matches | Where-Object { (([string]$_.UserPrincipalName).Trim().ToLowerInvariant() -eq $normalized) -or (([string]$_.Mail).Trim().ToLowerInvariant() -eq $normalized) } | Select-Object -First 1
-			$user = if ($exact) { $exact } else { $matches[0] }
+		$candidates = @(Get-MgUser -Filter "mail eq '$escaped' or userPrincipalName eq '$escaped'" -All -Property Id,UserPrincipalName,Mail,AccountEnabled)
+		if ($candidates.Count -gt 0) {
+			$exact = $candidates | Where-Object { (([string]$_.UserPrincipalName).Trim().ToLowerInvariant() -eq $normalized) -or (([string]$_.Mail).Trim().ToLowerInvariant() -eq $normalized) } | Select-Object -First 1
+			$user = if ($exact) { $exact } else { $candidates[0] }
 		}
 	}
 
@@ -860,14 +1200,17 @@ foreach ($required in @('TenantId', 'EntraClientId', 'SsBase', 'SendGridSecretId
 	}
 }
 
+if (-not (Get-Command -Name 'Invoke-SendGridRequest' -ErrorAction SilentlyContinue)) {
+	throw "Invoke-SendGridRequest was not found in 'Sendgrid API Functions.ps1'. Point Get-SendGridTeammateSubuserAccess and Get-SendGridTeammateDetail at the shared generic request function before running."
+}
+
 $sendGridSecretId = if ($null -ne $SendGridSecretIdOverride) { [int]$SendGridSecretIdOverride } else { [int]$SendGridSecretId }
 $graphSecretId = if ($null -ne $GraphCertSecretIdOverride) { [int]$GraphCertSecretIdOverride } else { [int]$SsSecretId }
 
 Write-Host ''
 Write-Host 'Preparing SendGrid + Graph clients...' -ForegroundColor Cyan
 
-$probeSecret = if ($sendGridSecretId -eq $graphSecretId) { $sendGridSecretId } else { $sendGridSecretId }
-$ssToken = Get-DelineaToken -SsBase $SsBase -ProbeSecretId $probeSecret -Comment 'SendGrid group migration read-only what-if inventory.'
+$ssToken = Get-DelineaToken -SsBase $SsBase -ProbeSecretId $sendGridSecretId -Comment 'SendGrid group migration read-only what-if inventory.'
 
 $sendGridClient = New-SendGridClientFromDelinea -SsBase $SsBase -SecretId $sendGridSecretId -SsToken $ssToken -Region $Region -DefaultPageSize 500
 $pfx = Get-SecretServerPfxObject -SecretId $graphSecretId -SsBase $SsBase -SsToken $ssToken
@@ -875,20 +1218,28 @@ $pfx = Get-SecretServerPfxObject -SecretId $graphSecretId -SsBase $SsBase -SsTok
 Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
 Connect-MgGraph -TenantId $TenantId -ClientId $EntraClientId -Certificate $pfx.Cert -NoWelcome | Out-Null
 
-Write-Host 'Reading current SendGrid teammates...' -ForegroundColor Cyan
-$teammates = @(Get-SendGridTeammates -Client $sendGridClient -PageSize 500)
-Write-Host ("  Found {0} teammate(s) on parent account." -f $teammates.Count)
+Write-Host 'Subuser persona templates (persona scopes limited to restricted subuser_access scopes):' -ForegroundColor Cyan
+foreach ($personaKey in @($SendGridSubuserPersonaScopes.Keys)) {
+	$dropped = @($SendGridSubuserPersonaDroppedScopes[$personaKey])
+	Write-Host ("  {0,-10} {1,3} scope(s); {2} parent-only scope(s) dropped" -f $personaKey, @($SendGridSubuserPersonaScopes[$personaKey]).Count, $dropped.Count)
+	if ($EmitMemberDetail -and $dropped.Count -gt 0) {
+		Write-Host ("             dropped: {0}" -f ($dropped -join ', ')) -ForegroundColor DarkGray
+	}
+}
 
 $requiredGroups = New-Object 'System.Collections.Generic.Dictionary[string, object]' ([System.StringComparer]::OrdinalIgnoreCase)
 $warnings = New-Object System.Collections.Generic.List[string]
 $inferredMembers = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 $memberByEmail = New-Object 'System.Collections.Generic.Dictionary[string, string]' ([System.StringComparer]::OrdinalIgnoreCase)
+$parentManagedAccess = New-Object 'System.Collections.Generic.Dictionary[string, object]' ([System.StringComparer]::OrdinalIgnoreCase)
 $sendGridRemovalCandidates = New-Object System.Collections.Generic.List[object]
+$legacyTeammates = New-Object System.Collections.Generic.List[object]
 
-Write-Host 'Reading SendGrid subusers for baseline group coverage...' -ForegroundColor Cyan
+Write-Host 'Reading SendGrid subusers...' -ForegroundColor Cyan
 $subusers = @(Get-SendGridSubusers -Client $sendGridClient -PageSize 500)
-$personaSlugs = @(Get-SupportedPersonaSlugs)
-Write-Host ("  Found {0} subuser(s); generating {1} persona group(s) per subuser." -f $subusers.Count, $personaSlugs.Count)
+$subuserNameById = New-Object 'System.Collections.Generic.Dictionary[string, string]' ([System.StringComparer]::OrdinalIgnoreCase)
+$subuserRoleSlugs = @('admin') + @(Get-SupportedPersonaSlugs)
+Write-Host ("  Found {0} subuser(s); baseline is {1} role group(s) per subuser." -f $subusers.Count, $subuserRoleSlugs.Count)
 
 foreach ($subuser in $subusers) {
 	$subuserName = [string](Get-OptionalObjectProperty -InputObject $subuser -Name 'username' -Default '')
@@ -896,15 +1247,25 @@ foreach ($subuser in $subusers) {
 		continue
 	}
 
+	$subuserId = [string](Get-OptionalObjectProperty -InputObject $subuser -Name 'id' -Default '')
+	if (-not [string]::IsNullOrWhiteSpace($subuserId)) {
+		$subuserNameById[$subuserId] = $subuserName
+	}
+
 	$subuserToken = ConvertTo-GroupToken -Value $subuserName
-	foreach ($personaSlug in $personaSlugs) {
-		$groupName = '{0}{1}-{2}' -f $GroupPrefix, $subuserToken, (ConvertTo-GroupToken -Value $personaSlug)
+	foreach ($roleSlug in $subuserRoleSlugs) {
+		$groupName = '{0}{1}-{2}' -f $GroupPrefix, $subuserToken, $roleSlug
 		Add-RequiredGroupEntry -Map $requiredGroups -GroupName $groupName -Reason 'subuser-baseline' -Member $null
 	}
 }
 
+Write-Host 'Reading parent-account teammates...' -ForegroundColor Cyan
+$teammates = @(Get-SendGridTeammates -Client $sendGridClient -PageSize 500)
+Write-Host ("  Found {0} teammate(s) on parent account." -f $teammates.Count)
+
 foreach ($teammate in $teammates) {
 	$email = [string](Get-OptionalObjectProperty -InputObject $teammate -Name 'email' -Default '')
+	$username = [string](Get-OptionalObjectProperty -InputObject $teammate -Name 'username' -Default '')
 	$lookupKey = Get-SendGridTeammateLookupKey -Teammate $teammate
 	$memberKey = if (-not [string]::IsNullOrWhiteSpace($email)) { $email.Trim().ToLowerInvariant() } else { [string]$lookupKey }
 
@@ -915,11 +1276,13 @@ foreach ($teammate in $teammates) {
 			[void]$sendGridRemovalCandidates.Add([pscustomobject]@{
 				TeammateLookupKey = $lookupKey
 				TeammateEmail     = $email.Trim().ToLowerInvariant()
+				Scope             = 'parent'
+				Subuser           = $null
 				Reason            = $reason
 			})
 
 			if (-not [string]::IsNullOrWhiteSpace($lookupKey)) {
-				[void]$warnings.Add("Teammate '$lookupKey' marked for removal ($reason).")
+				[void]$warnings.Add("Parent teammate '$lookupKey' marked for removal ($reason).")
 			}
 
 			continue
@@ -928,7 +1291,7 @@ foreach ($teammate in $teammates) {
 		$memberKey = $entraState.UserPrincipalName
 	}
 	elseif (-not [string]::IsNullOrWhiteSpace($lookupKey)) {
-		[void]$warnings.Add("Teammate '$lookupKey' has no email; skipping disabled/not-found Entra validation.")
+		[void]$warnings.Add("Parent teammate '$lookupKey' has no email; skipping disabled/not-found Entra validation.")
 	}
 
 	if (-not [string]::IsNullOrWhiteSpace($memberKey)) {
@@ -940,30 +1303,110 @@ foreach ($teammate in $teammates) {
 	}
 
 	$isAdmin = [bool](Get-OptionalObjectProperty -InputObject $teammate -Name 'is_admin' -Default $false)
-	$scopes = @((Get-OptionalObjectProperty -InputObject $teammate -Name 'scopes' -Default @()))
-
 	if ($isAdmin) {
-		Add-RequiredGroupEntry -Map $requiredGroups -GroupName $SendGridRoleSpec.Admin.GroupName -Reason 'main-account-admin' -Member $memberKey
+		Add-RequiredGroupEntry -Map $requiredGroups -GroupName $SendGridRoleSpec.Admin.GroupName -Reason 'parent-admin' -Member $memberKey
+		if (-not [string]::IsNullOrWhiteSpace($email)) {
+			Add-ParentManagedAccess -Map $parentManagedAccess -Email $email -SubuserToken '*'
+		}
+		continue
+	}
+
+	if ([string]::IsNullOrWhiteSpace($username)) {
+		[void]$warnings.Add("Parent teammate '$memberKey' has no username; cannot read subuser access or scopes.")
+		continue
+	}
+
+	# Subuser-scoped teammate: access is carried on subuser_access entries.
+	$access = $null
+	try {
+		$access = Get-SendGridTeammateSubuserAccess -Client $sendGridClient -Username $username
+	}
+	catch {
+		$msg = Get-SendGridErrorMessage -ErrorRecord $_
+		[void]$warnings.Add("Could not read subuser access for parent teammate '$username': $msg")
+		continue
+	}
+
+	if ($access.HasRestrictedSubuserAccess) {
+		foreach ($entry in $access.SubuserAccess) {
+			$entryId = [string](Get-OptionalObjectProperty -InputObject $entry -Name 'id' -Default '')
+			$entrySubuser = [string](Get-OptionalObjectProperty -InputObject $entry -Name 'username' -Default '')
+			if ([string]::IsNullOrWhiteSpace($entrySubuser) -and $subuserNameById.ContainsKey($entryId)) {
+				$entrySubuser = $subuserNameById[$entryId]
+			}
+
+			if ([string]::IsNullOrWhiteSpace($entrySubuser)) {
+				[void]$warnings.Add("Parent teammate '$memberKey' has subuser access to unknown subuser id '$entryId'.")
+				continue
+			}
+
+			$subuserToken = ConvertTo-GroupToken -Value $entrySubuser
+			if (-not [string]::IsNullOrWhiteSpace($email)) {
+				Add-ParentManagedAccess -Map $parentManagedAccess -Email $email -SubuserToken $subuserToken
+			}
+
+			$permissionType = ([string](Get-OptionalObjectProperty -InputObject $entry -Name 'permission_type' -Default '')).Trim().ToLowerInvariant()
+			if ($permissionType -eq 'admin') {
+				$groupName = '{0}{1}-admin' -f $GroupPrefix, $subuserToken
+				Add-RequiredGroupEntry -Map $requiredGroups -GroupName $groupName -Reason 'parent-subuser-access' -Member $memberKey
+				continue
+			}
+
+			$entryScopes = @((Get-OptionalObjectProperty -InputObject $entry -Name 'scopes' -Default @()))
+			$resolved = Resolve-SendGridPersonaFromScopes -Scopes $entryScopes -Scope Subuser
+
+			if ([string]::IsNullOrWhiteSpace([string]$resolved.Persona)) {
+				[void]$warnings.Add("Parent teammate '$memberKey' on subuser '$entrySubuser' has custom scopes ($($entryScopes.Count)); no persona match. Manual mapping needed.")
+				continue
+			}
+
+			if ($resolved.MatchType -eq 'superset') {
+				[void]$warnings.Add("Parent teammate '$memberKey' on subuser '$entrySubuser' mapped to '$($resolved.Persona)' with extra scope(s): $(@($resolved.ExtraScopes) -join ', ')")
+			}
+
+			$groupName = '{0}{1}-{2}' -f $GroupPrefix, $subuserToken, $resolved.Persona
+			Add-RequiredGroupEntry -Map $requiredGroups -GroupName $groupName -Reason 'parent-subuser-access' -Member $memberKey
+		}
+
+		continue
+	}
+
+	# Parent-scoped, non-admin teammate: scopes live on the teammate itself (detail call).
+	$detail = $null
+	try {
+		$detail = Get-SendGridTeammateDetail -Client $sendGridClient -Username $username
+	}
+	catch {
+		$msg = Get-SendGridErrorMessage -ErrorRecord $_
+		[void]$warnings.Add("Could not read scopes for parent teammate '$username': $msg")
+		continue
+	}
+
+	$parentScopes = @((Get-OptionalObjectProperty -InputObject $detail -Name 'scopes' -Default @()))
+	$resolved = Resolve-SendGridPersonaFromScopes -Scopes $parentScopes -Scope Parent
+
+	if ($resolved.Persona -eq $SendGridRoleSpec.AdminReadOnly.PersonaSlug) {
+		Add-RequiredGroupEntry -Map $requiredGroups -GroupName $SendGridRoleSpec.AdminReadOnly.GroupName -Reason 'parent-observer' -Member $memberKey
+		if ($resolved.MatchType -eq 'superset') {
+			[void]$warnings.Add("Parent teammate '$memberKey' mapped to admin-ro with extra scope(s): $(@($resolved.ExtraScopes) -join ', ')")
+		}
+	}
+	elseif (-not [string]::IsNullOrWhiteSpace([string]$resolved.Persona)) {
+		[void]$warnings.Add("Parent teammate '$memberKey' holds parent-level persona '$($resolved.Persona)'; only Observer maps to a group (admin-ro). Manual mapping needed.")
 	}
 	else {
-		$persona = Resolve-SendGridPersonaFromScopes -Scopes $scopes -PermissionType ([string](Get-OptionalObjectProperty -InputObject $teammate -Name 'user_type' -Default ''))
-		if ($persona -eq 'observer') {
-			Add-RequiredGroupEntry -Map $requiredGroups -GroupName $SendGridRoleSpec.AdminReadOnly.GroupName -Reason 'main-account-observer' -Member $memberKey
-		}
-		elseif (-not [string]::IsNullOrWhiteSpace($memberKey)) {
-			Add-RequiredGroupEntry -Map $requiredGroups -GroupName $SendGridRoleSpec.AdminReadOnly.GroupName -Reason 'main-account-nonadmin-fallback' -Member $memberKey
-			[void]$warnings.Add("Main teammate '$memberKey' is non-admin and was mapped to admin-ro by fallback.")
-		}
+		[void]$warnings.Add("Parent teammate '$memberKey' has custom parent scopes ($($parentScopes.Count)); no group mapping. Manual mapping needed.")
 	}
-
 }
 
-Write-Host 'Reading subuser-context teammates (on-behalf-of) for persona mapping...' -ForegroundColor Cyan
+Write-Host 'Reading legacy subuser-context teammates (on-behalf-of) for migration...' -ForegroundColor Cyan
 foreach ($subuser in $subusers) {
 	$subuserName = [string](Get-OptionalObjectProperty -InputObject $subuser -Name 'username' -Default '')
 	if ([string]::IsNullOrWhiteSpace($subuserName)) {
 		continue
 	}
+
+	$subuserToken = ConvertTo-GroupToken -Value $subuserName
 
 	try {
 		$subuserTeammates = @(Get-SendGridTeammates -Client $sendGridClient -OnBehalfOf $subuserName -PageSize 500)
@@ -980,31 +1423,81 @@ foreach ($subuser in $subusers) {
 			continue
 		}
 
-		$subEmailKey = $subEmail.Trim().ToLowerInvariant()
-		$memberKey = if ($memberByEmail.ContainsKey($subEmailKey)) { $memberByEmail[$subEmailKey] } else { $subEmailKey }
-		if (-not [string]::IsNullOrWhiteSpace($memberKey)) {
-			[void]$inferredMembers.Add($memberKey)
+		# Already covered from the parent (admin, or a subuser_access entry for this subuser): not legacy.
+		if (Test-ParentManagedAccess -Map $parentManagedAccess -Email $subEmail -SubuserToken $subuserToken) {
+			continue
 		}
+
+		$subEmailKey = $subEmail.Trim().ToLowerInvariant()
+		$subLookupKey = Get-SendGridTeammateLookupKey -Teammate $subuserTeammate
+		$subTeammateUsername = [string](Get-OptionalObjectProperty -InputObject $subuserTeammate -Name 'username' -Default '')
+		$displayKey = if ([string]::IsNullOrWhiteSpace($subLookupKey)) { $subEmailKey } else { $subLookupKey }
+
+		$entraState = Resolve-EntraUserStatusByEmail -Email $subEmail
+		if (-not $entraState.Exists -or -not $entraState.IsEnabled) {
+			$reason = if (-not $entraState.Exists) { 'not-found-in-entra' } else { 'entra-user-disabled' }
+			[void]$sendGridRemovalCandidates.Add([pscustomobject]@{
+				TeammateLookupKey = $subLookupKey
+				TeammateEmail     = $subEmailKey
+				Scope             = 'subuser'
+				Subuser           = $subuserName
+				Reason            = $reason
+			})
+			[void]$warnings.Add("Legacy teammate '$displayKey' on subuser '$subuserName' marked for removal ($reason).")
+			continue
+		}
+
+		$memberKey = $entraState.UserPrincipalName
+		[void]$inferredMembers.Add($memberKey)
+		$memberByEmail[$subEmailKey] = $memberKey
 
 		$subIsAdmin = [bool](Get-OptionalObjectProperty -InputObject $subuserTeammate -Name 'is_admin' -Default $false)
-		$subScopes = @((Get-OptionalObjectProperty -InputObject $subuserTeammate -Name 'scopes' -Default @()))
-		$subPermissionType = [string](Get-OptionalObjectProperty -InputObject $subuserTeammate -Name 'user_type' -Default '')
-		$persona = Resolve-SendGridPersonaFromScopes -Scopes $subScopes -PermissionType $subPermissionType
+		$mappedGroup = $null
 
 		if ($subIsAdmin) {
-			# Subuser admin does not map to a persona group; account admin logic is handled above.
-			continue
+			$mappedGroup = '{0}{1}-admin' -f $GroupPrefix, $subuserToken
+		}
+		elseif ([string]::IsNullOrWhiteSpace($subTeammateUsername)) {
+			[void]$warnings.Add("Legacy teammate '$displayKey' on subuser '$subuserName' has no username; cannot read scopes.")
+		}
+		else {
+			$subScopes = @()
+			try {
+				$subDetail = Get-SendGridTeammateDetail -Client $sendGridClient -Username $subTeammateUsername -OnBehalfOf $subuserName
+				$subScopes = @((Get-OptionalObjectProperty -InputObject $subDetail -Name 'scopes' -Default @()))
+			}
+			catch {
+				$msg = Get-SendGridErrorMessage -ErrorRecord $_
+				[void]$warnings.Add("Could not read scopes for legacy teammate '$displayKey' on subuser '$subuserName': $msg")
+			}
+
+			# A teammate inside a subuser holds full-account-style scopes; try the parent lists first.
+			$resolved = Resolve-SendGridPersonaFromScopes -Scopes $subScopes -Scope Parent
+			if ([string]::IsNullOrWhiteSpace([string]$resolved.Persona)) {
+				$resolved = Resolve-SendGridPersonaFromScopes -Scopes $subScopes -Scope Subuser
+			}
+
+			if ([string]::IsNullOrWhiteSpace([string]$resolved.Persona)) {
+				[void]$warnings.Add("Legacy teammate '$displayKey' on subuser '$subuserName' did not map to a known persona ($($subScopes.Count) scope(s)). Manual mapping needed.")
+			}
+			else {
+				if ($resolved.MatchType -eq 'superset') {
+					[void]$warnings.Add("Legacy teammate '$displayKey' on subuser '$subuserName' mapped to '$($resolved.Persona)' with extra scope(s): $(@($resolved.ExtraScopes) -join ', ')")
+				}
+				$mappedGroup = '{0}{1}-{2}' -f $GroupPrefix, $subuserToken, $resolved.Persona
+			}
 		}
 
-		if ([string]::IsNullOrWhiteSpace($persona)) {
-			$lookupKey = Get-SendGridTeammateLookupKey -Teammate $subuserTeammate
-			$displayKey = if ([string]::IsNullOrWhiteSpace($lookupKey)) { $subEmailKey } else { $lookupKey }
-			[void]$warnings.Add("Subuser teammate '$displayKey' on '$subuserName' did not map to a known persona.")
-			continue
+		if (-not [string]::IsNullOrWhiteSpace([string]$mappedGroup)) {
+			Add-RequiredGroupEntry -Map $requiredGroups -GroupName $mappedGroup -Reason 'legacy-subuser-teammate' -Member $memberKey
 		}
 
-		$groupName = '{0}{1}-{2}' -f $GroupPrefix, (ConvertTo-GroupToken -Value $subuserName), (ConvertTo-GroupToken -Value $persona)
-		Add-RequiredGroupEntry -Map $requiredGroups -GroupName $groupName -Reason 'subuser-persona-on-behalf-of' -Member $memberKey
+		[void]$legacyTeammates.Add([pscustomobject]@{
+			Subuser     = $subuserName
+			Teammate    = $displayKey
+			Member      = $memberKey
+			MappedGroup = if ([string]::IsNullOrWhiteSpace([string]$mappedGroup)) { '(manual)' } else { $mappedGroup }
+		})
 	}
 }
 
@@ -1047,6 +1540,17 @@ if ($EmitMemberDetail -and $required.Count -gt 0) {
 	}
 }
 
+Write-Host ''
+Write-Host 'Legacy subuser-context teammates (to migrate to parent subuser_access)' -ForegroundColor Cyan
+if ($legacyTeammates.Count -eq 0) {
+	Write-Host '  None found. All subuser access is already managed from the parent account.' -ForegroundColor Green
+}
+else {
+	Write-Host ("  Legacy teammates: {0}" -f $legacyTeammates.Count) -ForegroundColor Yellow
+	$legacyTeammates | Sort-Object -Property Subuser, Teammate | Format-Table -AutoSize -Wrap
+	Write-Host '  Migration (Phase 3): create/patch the parent SSO teammate with a subuser_access entry for the subuser, then delete the subuser-context teammate.' -ForegroundColor DarkYellow
+}
+
 if ($warnings.Count -gt 0) {
 	Write-Host ''
 	Write-Host 'Warnings / manual mapping needed:' -ForegroundColor DarkYellow
@@ -1059,13 +1563,15 @@ if ($sendGridRemovalCandidates.Count -eq 0) {
 	Write-Host '  No removal candidates found.' -ForegroundColor Green
 }
 else {
-	$uniqueRemovalCandidates = @($sendGridRemovalCandidates | Group-Object -Property TeammateLookupKey | ForEach-Object { $_.Group | Select-Object -First 1 })
+	$uniqueRemovalCandidates = @($sendGridRemovalCandidates | Group-Object -Property TeammateLookupKey, Scope, Subuser | ForEach-Object { $_.Group | Select-Object -First 1 })
 	Write-Host ("  Removal candidates: {0}" -f $uniqueRemovalCandidates.Count) -ForegroundColor Yellow
 	$uniqueRemovalCandidates |
-		Select-Object @{Name='Teammate';Expression={$_.TeammateLookupKey}}, @{Name='Email';Expression={$_.TeammateEmail}}, Reason |
+		Select-Object @{Name='Teammate';Expression={$_.TeammateLookupKey}}, @{Name='Email';Expression={$_.TeammateEmail}}, Scope, Subuser, Reason |
 		Format-Table -AutoSize -Wrap
 
 	if ($ApplySendGridRemovals) {
+		$removeSupportsOnBehalfOf = (Get-Command -Name 'Remove-SendGridTeammate').Parameters.ContainsKey('OnBehalfOf')
+
 		Write-Host '  Applying SendGrid removals...' -ForegroundColor Yellow
 		foreach ($candidate in $uniqueRemovalCandidates) {
 			if ([string]::IsNullOrWhiteSpace([string]$candidate.TeammateLookupKey)) {
@@ -1073,8 +1579,18 @@ else {
 			}
 
 			try {
-				Remove-SendGridTeammate -Client $sendGridClient -TeammateName $candidate.TeammateLookupKey -Confirm:$false
-				Write-Host ("  Removed teammate: {0}" -f $candidate.TeammateLookupKey) -ForegroundColor Green
+				if ($candidate.Scope -eq 'parent') {
+					Remove-SendGridTeammate -Client $sendGridClient -TeammateName $candidate.TeammateLookupKey -Confirm:$false
+				}
+				elseif ($removeSupportsOnBehalfOf) {
+					Remove-SendGridTeammate -Client $sendGridClient -TeammateName $candidate.TeammateLookupKey -OnBehalfOf $candidate.Subuser -Confirm:$false
+				}
+				else {
+					Write-Host ("  Skipped {0} on subuser {1}: Remove-SendGridTeammate has no -OnBehalfOf parameter." -f $candidate.TeammateLookupKey, $candidate.Subuser) -ForegroundColor DarkYellow
+					continue
+				}
+
+				Write-Host ("  Removed teammate: {0} ({1})" -f $candidate.TeammateLookupKey, $candidate.Scope) -ForegroundColor Green
 			}
 			catch {
 				$msg = Get-SendGridErrorMessage -ErrorRecord $_
@@ -1084,7 +1600,8 @@ else {
 	}
 	else {
 		foreach ($candidate in $uniqueRemovalCandidates) {
-			Write-Host ("  [WhatIf] Would remove SendGrid teammate: {0} ({1})" -f $candidate.TeammateLookupKey, $candidate.Reason) -ForegroundColor Yellow
+			$where = if ($candidate.Scope -eq 'parent') { 'parent' } else { "subuser $($candidate.Subuser)" }
+			Write-Host ("  [WhatIf] Would remove SendGrid teammate: {0} on {1} ({2})" -f $candidate.TeammateLookupKey, $where, $candidate.Reason) -ForegroundColor Yellow
 		}
 	}
 }
