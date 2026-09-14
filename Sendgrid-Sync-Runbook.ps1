@@ -95,11 +95,14 @@ if ([string]::IsNullOrWhiteSpace($SsoAccessGroupName)) {
 }
 
 # Scopes SendGrid adds on its own; ignored when comparing desired vs current.
+# (stats.read is injected on restricted subuser entries even when the persona
+# template omits it.)
 $SendGridImplicitScopes = @(
     '2fa_exempt',
     '2fa_required',
     'sender_verification_eligible',
     'sender_verification_legacy',
+    'stats.read',
     'user.profile.read',
     'user.profile.update'
 )
