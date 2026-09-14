@@ -1,0 +1,637 @@
+PS C:\Users\Clayton.Smith\GitHub Repo Clones\Clayton_M365_Scripts> . 'C:\Users\Clayton.Smith\GitHub Repo Clones\Clayton_M365_Scripts\Sendgrid\Azure Group Management.ps1'
+
+Preparing SendGrid + Graph clients...
+Reusing cached Delinea token from $env:SS_TOKEN.
+Subuser persona templates (persona scopes limited to restricted subuser_access scopes):
+  accountant  24 scope(s); 13 parent-only scope(s) dropped
+             dropped: billing.create, billing.read, billing.update, billing.delete, subusers.stats.read, subusers.stats.sums.read, subusers.stats.monthly.read, user.profile.read, user.profile.update, sender_verification_eligible, sender_verification_legacy, 2fa_exempt, 2fa_required
+  developer  120 scope(s); 13 parent-only scope(s) dropped
+             dropped: ips.create, ips.read, ips.update, ips.delete, subusers.stats.read, subusers.stats.sums.read, subusers.stats.monthly.read, user.profile.read, user.profile.update, sender_verification_eligible, sender_verification_legacy, 2fa_exempt, 2fa_required
+  marketer    62 scope(s); 9 parent-only scope(s) dropped
+             dropped: subusers.stats.read, subusers.stats.sums.read, subusers.stats.monthly.read, user.profile.read, user.profile.update, sender_verification_eligible, sender_verification_legacy, 2fa_exempt, 2fa_required
+  observer    58 scope(s); 17 parent-only scope(s) dropped
+             dropped: billing.read, ips.read, subusers.stats.read, subusers.stats.sums.read, subusers.stats.monthly.read, subusers.read, subusers.monitor.read, subusers.credits.read, subusers.credits.remaining.read, subusers.reputations.read, subusers.summary.read, user.profile.read, user.profile.update, sender_verification_eligible, sender_verification_legacy, 2fa_exempt, 2fa_required
+Reading SendGrid subusers...
+  Found 24 subuser(s); baseline is 5 role group(s) per subuser.                                                         
+Reading parent-account teammates...
+  Found 9 teammate(s) on parent account.                                                                                
+Reading legacy subuser-context teammates (on-behalf-of) for migration...                                                
+Reading existing Entra groups...                                                                                        
+
+WhatIf Group Creation Plan (mirror current SendGrid access)
+  Required groups : 121
+  Existing groups : 0
+  Missing groups  : 121
+
+Groups to create:
+
+GroupName                                                Reasons                                   MemberCount
+---------                                                -------                                   -----------
+cs-sendgrid-coretritonrelay-admin                        subuser-baseline                                    0
+cs-sendgrid-asc-marketing-prod-developer                 subuser-baseline                                    0
+cs-sendgrid-asc-marketing-prod-accountant                subuser-baseline                                    0
+cs-sendgrid-asc-marketing-prod-admin                     subuser-baseline                                    0
+cs-sendgrid-lau-marketing-observer                       subuser-baseline                                    0
+cs-sendgrid-lau-marketing-marketer                       subuser-baseline                                    0
+cs-sendgrid-lau-marketing-developer                      subuser-baseline                                    0
+cs-sendgrid-lau-marketing-accountant                     subuser-baseline                                    0
+cs-sendgrid-lau-marketing-admin                          subuser-baseline                                    0
+cs-sendgrid-jetfile-dev-observer                         subuser-baseline                                    0
+cs-sendgrid-jetfile-dev-marketer                         subuser-baseline                                    0
+cs-sendgrid-jetfile-dev-developer                        subuser-baseline                                    0
+cs-sendgrid-jetfile-dev-accountant                       subuser-baseline                                    0
+cs-sendgrid-asc-marketing-prod-marketer                  subuser-baseline                                    0
+cs-sendgrid-jetfile-dev-admin                            subuser-baseline                                    0
+cs-sendgrid-siu-friss-dev-marketer                       subuser-baseline                                    0
+cs-sendgrid-siu-friss-dev-developer                      subuser-baseline                                    0
+cs-sendgrid-siu-friss-dev-accountant                     subuser-baseline                                    0
+cs-sendgrid-siu-friss-dev-admin                          subuser-baseline                                    0
+cs-sendgrid-siu-friss-prod-observer                      subuser-baseline                                    0
+cs-sendgrid-siu-friss-prod-marketer                      subuser-baseline                                    0
+cs-sendgrid-siu-friss-prod-developer                     subuser-baseline                                    0
+cs-sendgrid-siu-friss-prod-accountant                    subuser-baseline                                    0
+cs-sendgrid-siu-friss-prod-admin                         subuser-baseline                                    0
+cs-sendgrid-jetfile-prod-observer                        subuser-baseline                                    0
+cs-sendgrid-jetfile-prod-marketer                        subuser-baseline                                    0
+cs-sendgrid-jetfile-prod-developer                       subuser-baseline                                    0
+cs-sendgrid-siu-friss-dev-observer                       subuser-baseline                                    0
+cs-sendgrid-asc-marketing-prod-observer                  subuser-baseline                                    0
+cs-sendgrid-quicksilver-nonprod-admin                    subuser-baseline                                    0
+cs-sendgrid-quicksilver-nonprod-accountant               subuser-baseline                                    0
+cs-sendgrid-helpdesk-blackhole-marketer                  subuser-baseline                                    0
+cs-sendgrid-helpdesk-blackhole-developer                 subuser-baseline                                    0
+cs-sendgrid-helpdesk-blackhole-accountant                subuser-baseline                                    0
+cs-sendgrid-helpdesk-blackhole-admin                     subuser-baseline                                    0
+cs-sendgrid-emailsubmissions-prod-observer               subuser-baseline                                    0
+cs-sendgrid-emailsubmissions-prod-marketer               subuser-baseline                                    0
+cs-sendgrid-emailsubmissions-prod-developer              subuser-baseline                                    0
+cs-sendgrid-emailsubmissions-prod-accountant             subuser-baseline                                    0
+cs-sendgrid-emailsubmissions-prod-admin                  subuser-baseline                                    0
+cs-sendgrid-emailsubmissions-dev-observer                subuser-baseline                                    0
+cs-sendgrid-emailsubmissions-dev-marketer                subuser-baseline                                    0
+cs-sendgrid-emailsubmissions-dev-developer               subuser-baseline                                    0
+cs-sendgrid-emailsubmissions-dev-accountant              subuser-baseline                                    0
+cs-sendgrid-emailsubmissions-dev-admin                   subuser-baseline                                    0
+cs-sendgrid-broker-communications-observer               subuser-baseline                                    0
+cs-sendgrid-broker-communications-marketer               subuser-baseline                                    0
+cs-sendgrid-broker-communications-developer              subuser-baseline                                    0
+cs-sendgrid-broker-communications-accountant             subuser-baseline                                    0
+cs-sendgrid-broker-communications-admin                  subuser-baseline                                    0
+cs-sendgrid-quicksilver-prod-observer                    subuser-baseline                                    0
+cs-sendgrid-quicksilver-prod-marketer                    subuser-baseline                                    0
+cs-sendgrid-quicksilver-prod-developer                   subuser-baseline                                    0
+cs-sendgrid-quicksilver-prod-accountant                  subuser-baseline                                    0
+cs-sendgrid-quicksilver-prod-admin                       subuser-baseline                                    0
+cs-sendgrid-quicksilver-nonprod-observer                 subuser-baseline                                    0
+cs-sendgrid-quicksilver-nonprod-marketer                 subuser-baseline                                    0
+cs-sendgrid-quicksilver-nonprod-developer                subuser-baseline                                    0
+cs-sendgrid-jetfile-prod-accountant                      subuser-baseline                                    0
+cs-sendgrid-helpdesk-blackhole-observer                  subuser-baseline                                    0
+cs-sendgrid-jetfile-prod-admin                           subuser-baseline; parent-subuser-access             1
+cs-sendgrid-duckcreek-prod-marketer                      subuser-baseline                                    0
+cs-sendgrid-wc-online-service-accountant                 subuser-baseline                                    0
+cs-sendgrid-wc-online-service-admin                      subuser-baseline                                    0
+cs-sendgrid-core-alteryx-application-observer            subuser-baseline                                    0
+cs-sendgrid-core-alteryx-application-marketer            subuser-baseline                                    0
+cs-sendgrid-core-alteryx-application-developer           subuser-baseline                                    0
+cs-sendgrid-core-alteryx-application-accountant          subuser-baseline                                    0
+cs-sendgrid-core-alteryx-application-admin               subuser-baseline                                    0
+cs-sendgrid-internal-email-communications-dev-observer   subuser-baseline                                    0
+cs-sendgrid-internal-email-communications-dev-marketer   subuser-baseline                                    0
+cs-sendgrid-internal-email-communications-dev-developer  subuser-baseline                                    0
+cs-sendgrid-internal-email-communications-dev-accountant subuser-baseline                                    0
+cs-sendgrid-internal-email-communications-dev-admin      subuser-baseline                                    0
+cs-sendgrid-wc-online-service-developer                  subuser-baseline                                    0
+cs-sendgrid-duckcreek-dev-qa-uat-observer                subuser-baseline                                    0
+cs-sendgrid-duckcreek-dev-qa-uat-developer               subuser-baseline                                    0
+cs-sendgrid-duckcreek-dev-qa-uat-accountant              subuser-baseline                                    0
+cs-sendgrid-duckcreek-dev-qa-uat-admin                   subuser-baseline                                    0
+cs-sendgrid-yosemite-application-relay-observer          subuser-baseline                                    0
+cs-sendgrid-yosemite-application-relay-marketer          subuser-baseline                                    0
+cs-sendgrid-yosemite-application-relay-developer         subuser-baseline                                    0
+cs-sendgrid-yosemite-application-relay-accountant        subuser-baseline; legacy-subuser-teammate           1
+cs-sendgrid-yosemite-application-relay-admin             subuser-baseline                                    0
+cs-sendgrid-coretritonrelay-observer                     subuser-baseline                                    0
+cs-sendgrid-coretritonrelay-marketer                     subuser-baseline                                    0
+cs-sendgrid-coretritonrelay-developer                    subuser-baseline                                    0
+cs-sendgrid-coretritonrelay-accountant                   subuser-baseline; legacy-subuser-teammate           1
+cs-sendgrid-duckcreek-dev-qa-uat-marketer                subuser-baseline                                    0
+cs-sendgrid-wc-online-service-marketer                   subuser-baseline                                    0
+cs-sendgrid-wc-online-service-observer                   subuser-baseline                                    0
+cs-sendgrid-internal-email-communications-admin          subuser-baseline                                    0
+cs-sendgrid-duckcreek-prod-developer                     subuser-baseline                                    0
+cs-sendgrid-duckcreek-prod-accountant                    subuser-baseline                                    0
+cs-sendgrid-duckcreek-prod-admin                         subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-pre-prod-observer            subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-pre-prod-marketer            subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-pre-prod-developer           subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-pre-prod-accountant          subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-pre-prod-admin               subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-non-prod-observer            subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-non-prod-marketer            subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-non-prod-developer           subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-non-prod-accountant          subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-non-prod-admin               subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-prod-observer                subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-prod-marketer                subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-prod-developer               subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-prod-accountant              subuser-baseline                                    0
+cs-sendgrid-core-mft-alerts-prod-admin                   subuser-baseline                                    0
+cs-sendgrid-introspec-prod-observer                      subuser-baseline                                    0
+cs-sendgrid-introspec-prod-marketer                      subuser-baseline                                    0
+cs-sendgrid-introspec-prod-developer                     subuser-baseline                                    0
+cs-sendgrid-introspec-prod-accountant                    subuser-baseline                                    0
+cs-sendgrid-introspec-prod-admin                         subuser-baseline                                    0
+cs-sendgrid-internal-email-communications-observer       subuser-baseline                                    0
+cs-sendgrid-internal-email-communications-marketer       subuser-baseline                                    0
+cs-sendgrid-internal-email-communications-developer      subuser-baseline                                    0
+cs-sendgrid-internal-email-communications-accountant     subuser-baseline; legacy-subuser-teammate           2
+cs-sendgrid-duckcreek-prod-observer                      subuser-baseline                                    0
+cs-sendgrid-admin                                        parent-admin                                        3
+
+
+WhatIf actions:
+  [WhatIf] Would create Entra group: cs-sendgrid-coretritonrelay-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-asc-marketing-prod-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-asc-marketing-prod-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-asc-marketing-prod-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-lau-marketing-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-lau-marketing-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-lau-marketing-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-lau-marketing-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-lau-marketing-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-jetfile-dev-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-jetfile-dev-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-jetfile-dev-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-jetfile-dev-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-asc-marketing-prod-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-jetfile-dev-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-siu-friss-dev-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-siu-friss-dev-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-siu-friss-dev-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-siu-friss-dev-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-siu-friss-prod-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-siu-friss-prod-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-siu-friss-prod-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-siu-friss-prod-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-siu-friss-prod-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-jetfile-prod-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-jetfile-prod-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-jetfile-prod-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-siu-friss-dev-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-asc-marketing-prod-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-quicksilver-nonprod-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-quicksilver-nonprod-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-helpdesk-blackhole-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-helpdesk-blackhole-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-helpdesk-blackhole-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-helpdesk-blackhole-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-emailsubmissions-prod-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-emailsubmissions-prod-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-emailsubmissions-prod-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-emailsubmissions-prod-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-emailsubmissions-prod-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-emailsubmissions-dev-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-emailsubmissions-dev-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-emailsubmissions-dev-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-emailsubmissions-dev-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-emailsubmissions-dev-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-broker-communications-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-broker-communications-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-broker-communications-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-broker-communications-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-broker-communications-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-quicksilver-prod-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-quicksilver-prod-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-quicksilver-prod-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-quicksilver-prod-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-quicksilver-prod-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-quicksilver-nonprod-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-quicksilver-nonprod-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-quicksilver-nonprod-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-jetfile-prod-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-helpdesk-blackhole-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-jetfile-prod-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-duckcreek-prod-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-wc-online-service-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-wc-online-service-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-core-alteryx-application-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-core-alteryx-application-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-core-alteryx-application-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-core-alteryx-application-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-core-alteryx-application-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-internal-email-communications-dev-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-internal-email-communications-dev-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-internal-email-communications-dev-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-internal-email-communications-dev-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-internal-email-communications-dev-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-wc-online-service-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-duckcreek-dev-qa-uat-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-duckcreek-dev-qa-uat-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-duckcreek-dev-qa-uat-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-duckcreek-dev-qa-uat-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-yosemite-application-relay-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-yosemite-application-relay-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-yosemite-application-relay-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-yosemite-application-relay-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-yosemite-application-relay-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-coretritonrelay-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-coretritonrelay-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-coretritonrelay-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-coretritonrelay-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-duckcreek-dev-qa-uat-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-wc-online-service-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-wc-online-service-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-internal-email-communications-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-duckcreek-prod-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-duckcreek-prod-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-duckcreek-prod-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-pre-prod-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-pre-prod-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-pre-prod-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-pre-prod-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-pre-prod-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-non-prod-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-non-prod-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-non-prod-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-non-prod-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-non-prod-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-prod-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-prod-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-prod-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-prod-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-core-mft-alerts-prod-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-introspec-prod-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-introspec-prod-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-introspec-prod-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-introspec-prod-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-introspec-prod-admin
+  [WhatIf] Would create Entra group: cs-sendgrid-internal-email-communications-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-internal-email-communications-marketer
+  [WhatIf] Would create Entra group: cs-sendgrid-internal-email-communications-developer
+  [WhatIf] Would create Entra group: cs-sendgrid-internal-email-communications-accountant
+  [WhatIf] Would create Entra group: cs-sendgrid-duckcreek-prod-observer
+  [WhatIf] Would create Entra group: cs-sendgrid-admin
+
+Role-source detail (group -> members inferred from SendGrid):
+  cs-sendgrid-coretritonrelay-admin
+    Members: (none)
+  cs-sendgrid-asc-marketing-prod-developer
+    Members: (none)
+  cs-sendgrid-asc-marketing-prod-accountant
+    Members: (none)
+  cs-sendgrid-asc-marketing-prod-admin
+    Members: (none)
+  cs-sendgrid-lau-marketing-observer
+    Members: (none)
+  cs-sendgrid-lau-marketing-marketer
+    Members: (none)
+  cs-sendgrid-lau-marketing-developer
+    Members: (none)
+  cs-sendgrid-lau-marketing-accountant
+    Members: (none)
+  cs-sendgrid-lau-marketing-admin
+    Members: (none)
+  cs-sendgrid-jetfile-dev-observer
+    Members: (none)
+  cs-sendgrid-jetfile-dev-marketer
+    Members: (none)
+  cs-sendgrid-jetfile-dev-developer
+    Members: (none)
+  cs-sendgrid-jetfile-dev-accountant
+    Members: (none)
+  cs-sendgrid-asc-marketing-prod-marketer
+    Members: (none)
+  cs-sendgrid-jetfile-dev-admin
+    Members: (none)
+  cs-sendgrid-siu-friss-dev-marketer
+    Members: (none)
+  cs-sendgrid-siu-friss-dev-developer
+    Members: (none)
+  cs-sendgrid-siu-friss-dev-accountant
+    Members: (none)
+  cs-sendgrid-siu-friss-dev-admin
+    Members: (none)
+  cs-sendgrid-siu-friss-prod-observer
+    Members: (none)
+  cs-sendgrid-siu-friss-prod-marketer
+    Members: (none)
+  cs-sendgrid-siu-friss-prod-developer
+    Members: (none)
+  cs-sendgrid-siu-friss-prod-accountant
+    Members: (none)
+  cs-sendgrid-siu-friss-prod-admin
+    Members: (none)
+  cs-sendgrid-jetfile-prod-observer
+    Members: (none)
+  cs-sendgrid-jetfile-prod-marketer
+    Members: (none)
+  cs-sendgrid-jetfile-prod-developer
+    Members: (none)
+  cs-sendgrid-siu-friss-dev-observer
+    Members: (none)
+  cs-sendgrid-asc-marketing-prod-observer
+    Members: (none)
+  cs-sendgrid-quicksilver-nonprod-admin
+    Members: (none)
+  cs-sendgrid-quicksilver-nonprod-accountant
+    Members: (none)
+  cs-sendgrid-helpdesk-blackhole-marketer
+    Members: (none)
+  cs-sendgrid-helpdesk-blackhole-developer
+    Members: (none)
+  cs-sendgrid-helpdesk-blackhole-accountant
+    Members: (none)
+  cs-sendgrid-helpdesk-blackhole-admin
+    Members: (none)
+  cs-sendgrid-emailsubmissions-prod-observer
+    Members: (none)
+  cs-sendgrid-emailsubmissions-prod-marketer
+    Members: (none)
+  cs-sendgrid-emailsubmissions-prod-developer
+    Members: (none)
+  cs-sendgrid-emailsubmissions-prod-accountant
+    Members: (none)
+  cs-sendgrid-emailsubmissions-prod-admin
+    Members: (none)
+  cs-sendgrid-emailsubmissions-dev-observer
+    Members: (none)
+  cs-sendgrid-emailsubmissions-dev-marketer
+    Members: (none)
+  cs-sendgrid-emailsubmissions-dev-developer
+    Members: (none)
+  cs-sendgrid-emailsubmissions-dev-accountant
+    Members: (none)
+  cs-sendgrid-emailsubmissions-dev-admin
+    Members: (none)
+  cs-sendgrid-broker-communications-observer
+    Members: (none)
+  cs-sendgrid-broker-communications-marketer
+    Members: (none)
+  cs-sendgrid-broker-communications-developer
+    Members: (none)
+  cs-sendgrid-broker-communications-accountant
+    Members: (none)
+  cs-sendgrid-broker-communications-admin
+    Members: (none)
+  cs-sendgrid-quicksilver-prod-observer
+    Members: (none)
+  cs-sendgrid-quicksilver-prod-marketer
+    Members: (none)
+  cs-sendgrid-quicksilver-prod-developer
+    Members: (none)
+  cs-sendgrid-quicksilver-prod-accountant
+    Members: (none)
+  cs-sendgrid-quicksilver-prod-admin
+    Members: (none)
+  cs-sendgrid-quicksilver-nonprod-observer
+    Members: (none)
+  cs-sendgrid-quicksilver-nonprod-marketer
+    Members: (none)
+  cs-sendgrid-quicksilver-nonprod-developer
+    Members: (none)
+  cs-sendgrid-jetfile-prod-accountant
+    Members: (none)
+  cs-sendgrid-helpdesk-blackhole-observer
+    Members: (none)
+  cs-sendgrid-jetfile-prod-admin
+    Members: thomas.breuler@corespecialty.com
+  cs-sendgrid-duckcreek-prod-marketer
+    Members: (none)
+  cs-sendgrid-wc-online-service-accountant
+    Members: (none)
+  cs-sendgrid-wc-online-service-admin
+    Members: (none)
+  cs-sendgrid-core-alteryx-application-observer
+    Members: (none)
+  cs-sendgrid-core-alteryx-application-marketer
+    Members: (none)
+  cs-sendgrid-core-alteryx-application-developer
+    Members: (none)
+  cs-sendgrid-core-alteryx-application-accountant
+    Members: (none)
+  cs-sendgrid-core-alteryx-application-admin
+    Members: (none)
+  cs-sendgrid-internal-email-communications-dev-observer
+    Members: (none)
+  cs-sendgrid-internal-email-communications-dev-marketer
+    Members: (none)
+  cs-sendgrid-internal-email-communications-dev-developer
+    Members: (none)
+  cs-sendgrid-internal-email-communications-dev-accountant
+    Members: (none)
+  cs-sendgrid-internal-email-communications-dev-admin
+    Members: (none)
+  cs-sendgrid-wc-online-service-developer
+    Members: (none)
+  cs-sendgrid-duckcreek-dev-qa-uat-observer
+    Members: (none)
+  cs-sendgrid-duckcreek-dev-qa-uat-developer
+    Members: (none)
+  cs-sendgrid-duckcreek-dev-qa-uat-accountant
+    Members: (none)
+  cs-sendgrid-duckcreek-dev-qa-uat-admin
+    Members: (none)
+  cs-sendgrid-yosemite-application-relay-observer
+    Members: (none)
+  cs-sendgrid-yosemite-application-relay-marketer
+    Members: (none)
+  cs-sendgrid-yosemite-application-relay-developer
+    Members: (none)
+  cs-sendgrid-yosemite-application-relay-accountant
+    Members: shelby.pugh@corespecialty.com
+  cs-sendgrid-yosemite-application-relay-admin
+    Members: (none)
+  cs-sendgrid-coretritonrelay-observer
+    Members: (none)
+  cs-sendgrid-coretritonrelay-marketer
+    Members: (none)
+  cs-sendgrid-coretritonrelay-developer
+    Members: (none)
+  cs-sendgrid-coretritonrelay-accountant
+    Members: andrea.perrigoue@corespecialty.com
+  cs-sendgrid-duckcreek-dev-qa-uat-marketer
+    Members: (none)
+  cs-sendgrid-wc-online-service-marketer
+    Members: (none)
+  cs-sendgrid-wc-online-service-observer
+    Members: (none)
+  cs-sendgrid-internal-email-communications-admin
+    Members: (none)
+  cs-sendgrid-duckcreek-prod-developer
+    Members: (none)
+  cs-sendgrid-duckcreek-prod-accountant
+    Members: (none)
+  cs-sendgrid-duckcreek-prod-admin
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-pre-prod-observer
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-pre-prod-marketer
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-pre-prod-developer
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-pre-prod-accountant
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-pre-prod-admin
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-non-prod-observer
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-non-prod-marketer
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-non-prod-developer
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-non-prod-accountant
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-non-prod-admin
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-prod-observer
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-prod-marketer
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-prod-developer
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-prod-accountant
+    Members: (none)
+  cs-sendgrid-core-mft-alerts-prod-admin
+    Members: (none)
+  cs-sendgrid-introspec-prod-observer
+    Members: (none)
+  cs-sendgrid-introspec-prod-marketer
+    Members: (none)
+  cs-sendgrid-introspec-prod-developer
+    Members: (none)
+  cs-sendgrid-introspec-prod-accountant
+    Members: (none)
+  cs-sendgrid-introspec-prod-admin
+    Members: (none)
+  cs-sendgrid-internal-email-communications-observer
+    Members: (none)
+  cs-sendgrid-internal-email-communications-marketer
+    Members: (none)
+  cs-sendgrid-internal-email-communications-developer
+    Members: (none)
+  cs-sendgrid-internal-email-communications-accountant
+    Members: bobbisue.morrison@corespecialty.com, julie.kidwell@corespecialty.com
+  cs-sendgrid-duckcreek-prod-observer
+    Members: (none)
+  cs-sendgrid-admin
+    Members: clayton.smith@corespecialty.com, sandesh.awate@corespecialty.com, tommy.kanger@corespecialty.com
+
+Legacy subuser-context teammates (to migrate to parent subuser_access)
+  Legacy teammates: 20
+
+Subuser                       Teammate                            Member                              MappedGroup                                          MappedBy
+-------                       --------                            ------                              -----------                                          --------
+broker-communications         alyssa.alonso@corespecialty.com     alyssa.alonso@corespecialty.com     (manual)                                             (manual)
+CoreTritonRelay               andrea.perrigoue@corespecialty.com  andrea.perrigoue@corespecialty.com  cs-sendgrid-coretritonrelay-accountant               persona
+Internal Email Communications bobbisue.morrison@corespecialty.com bobbisue.morrison@corespecialty.com cs-sendgrid-internal-email-communications-accountant persona
+Internal Email Communications julie.kidwell@corespecialty.com     julie.kidwell@corespecialty.com     cs-sendgrid-internal-email-communications-accountant persona
+lau-marketing                 aimie.reese@corespecialty.com       aimie.reese@corespecialty.com       (manual)                                             (manual)
+lau-marketing                 amanda.hillquist@corespecialty.com  amanda.hillquist@corespecialty.com  (manual)                                             (manual)
+lau-marketing                 carly.jones@corespecialty.com       carly.jones@corespecialty.com       (manual)                                             (manual)
+lau-marketing                 david.purviance@corespecialty.com   david.purviance@corespecialty.com   (manual)                                             (manual)
+lau-marketing                 haley.farrell@corespecialty.com     haley.farrell@corespecialty.com     (manual)                                             (manual)
+lau-marketing                 jeffrey.sutton@corespecialty.com    jeffrey.sutton@corespecialty.com    (manual)                                             (manual)
+lau-marketing                 jessica.lavalley@corespecialty.com  jessica.lavalley@corespecialty.com  (manual)                                             (manual)
+lau-marketing                 kathleen.Schwartz@corespecialty.com kathleen.schwartz@corespecialty.com (manual)                                             (manual)
+lau-marketing                 linda.tapia@corespecialty.com       linda.tapia@corespecialty.com       (manual)                                             (manual)
+lau-marketing                 lisa.kamuf@corespecialty.com        lisa.kamuf@corespecialty.com        (manual)                                             (manual)
+lau-marketing                 melissa.pelham@corespecialty.com    melissa.pelham@corespecialty.com    (manual)                                             (manual)
+lau-marketing                 natalie.galindo@corespecialty.com   natalie.galindo@corespecialty.com   (manual)                                             (manual)
+lau-marketing                 peter.barnes@corespecialty.com      peter.barnes@corespecialty.com      (manual)                                             (manual)
+lau-marketing                 tomasso.campisi@corespecialty.com   tomasso.campisi@corespecialty.com   (manual)                                             (manual)
+lau-marketing                 zena.contrades@corespecialty.com    zena.contrades@corespecialty.com    (manual)                                             (manual)
+Yosemite Application Relay    shelby.pugh@corespecialty.com       shelby.pugh@corespecialty.com       cs-sendgrid-yosemite-application-relay-accountant    persona
+
+  Migration (Phase 3): create/patch the parent SSO teammate with a subuser_access entry for the subuser, then delete the subuser-context teammate.
+
+Warnings / manual mapping needed:
+  - Legacy teammate 'aimie.reese@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'alyssa.alonso@corespecialty.com' on subuser 'broker-communications' did not map to a known persona (85 scope(s)). Manual mapping needed.
+  - Legacy teammate 'amanda.hillquist@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'andrea.perrigoue@corespecialty.com' on subuser 'CoreTritonRelay' mapped to 'accountant' with extra scope(s): 2fa_exempt, 2fa_required, access_settings.activity.read, access_settings.whitelist.read, alerts.read, api_keys.read, asm.groups.read, email_testing.read, ips.pools.ips.read, ips.pools.read, ips.read, ips.warmup.read, mail_settings.address_whitelist.read, mail_settings.bcc.read, mail_settings.bounce_purge.update, mail_settings.footer.read, mail_settings.forward_bounce.read, mail_settings.forward_spam.read, mail_settings.plain_content.read, mail_settings.spam_check.read, mail_settings.template.read, mail.batch.read, messages.read, partner_settings.new_relic.read, partner_settings.sendwithus.read, sender_verification_eligible, suppression.read, templates.read, templates.versions.read, tracking_settings.click.read, tracking_settings.google_analytics.read, tracking_settings.open.read, tracking_settings.subscription.read, user.profile.read, user.scheduled_sends.read, user.webhooks.event.settings.read, user.webhooks.event.test.read, user.webhooks.parse.settings.read
+  - Legacy teammate 'bobbisue.morrison@corespecialty.com' on subuser 'Internal Email Communications' mapped to 'accountant' with extra scope(s): 2fa_exempt, 2fa_required, access_settings.activity.read, access_settings.whitelist.create, access_settings.whitelist.delete, access_settings.whitelist.read, access_settings.whitelist.update, alerts.create, alerts.delete, alerts.read, alerts.update, asm.groups.create, asm.groups.delete, asm.groups.read, asm.groups.suppressions.create, asm.groups.suppressions.delete, asm.groups.suppressions.read, asm.groups.suppressions.update, asm.groups.update, asm.suppressions.global.create, asm.suppressions.global.delete, asm.suppressions.global.read, asm.suppressions.global.update, categories.create, categories.delete, categories.update, design_library.create, design_library.delete, design_library.read, design_library.update, di.bounce_block_classification.read, email_testing.read, email_testing.write, mail_settings.address_whitelist.create, mail_settings.address_whitelist.delete, mail_settings.address_whitelist.read, mail_settings.address_whitelist.update, mail_settings.bcc.create, mail_settings.bcc.delete, mail_settings.bcc.read, mail_settings.bcc.update, mail_settings.bounce_purge.create, mail_settings.bounce_purge.delete, mail_settings.bounce_purge.read, mail_settings.bounce_purge.update, mail_settings.footer.create, mail_settings.footer.delete, mail_settings.footer.read, mail_settings.footer.update, mail_settings.forward_bounce.create, mail_settings.forward_bounce.delete, mail_settings.forward_bounce.read, mail_settings.forward_bounce.update, mail_settings.forward_spam.create, mail_settings.forward_spam.delete, mail_settings.forward_spam.read, mail_settings.forward_spam.update, mail_settings.plain_content.create, mail_settings.plain_content.delete, mail_settings.plain_content.read, mail_settings.plain_content.update, mail_settings.spam_check.create, mail_settings.spam_check.delete, mail_settings.spam_check.read, mail_settings.spam_check.update, mail_settings.template.create, mail_settings.template.delete, mail_settings.template.read, mail_settings.template.update, mail.batch.create, mail.batch.delete, mail.batch.read, mail.batch.update, mail.send, marketing.read, partner_settings.new_relic.create, partner_settings.new_relic.delete, partner_settings.new_relic.read, partner_settings.new_relic.update, partner_settings.sendwithus.create, partner_settings.sendwithus.delete, partner_settings.sendwithus.read, partner_settings.sendwithus.update, recipients.erasejob.create, recipients.erasejob.read, sender_verification_eligible, suppression.blocks.create, suppression.blocks.delete, suppression.blocks.read, suppression.blocks.update, suppression.bounces.create, suppression.bounces.delete, suppression.bounces.read, suppression.bounces.update, suppression.create, suppression.delete, suppression.invalid_emails.create, suppression.invalid_emails.delete, suppression.invalid_emails.read, suppression.invalid_emails.update, suppression.read, suppression.spam_reports.create, suppression.spam_reports.delete, suppression.spam_reports.read, suppression.spam_reports.update, suppression.unsubscribes.create, suppression.unsubscribes.delete, suppression.unsubscribes.read, suppression.unsubscribes.update, suppression.update, templates.create, templates.delete, templates.read, templates.update, templates.versions.activate.create, templates.versions.activate.delete, templates.versions.activate.read, templates.versions.activate.update, templates.versions.create, templates.versions.delete, templates.versions.read, templates.versions.update, tracking_settings.click.create, tracking_settings.click.delete, tracking_settings.click.read, tracking_settings.click.update, tracking_settings.google_analytics.create, tracking_settings.google_analytics.delete, tracking_settings.google_analytics.read, tracking_settings.google_analytics.update, tracking_settings.open.create, tracking_settings.open.delete, tracking_settings.open.read, tracking_settings.open.update, tracking_settings.subscription.create, tracking_settings.subscription.delete, tracking_settings.subscription.read, tracking_settings.subscription.update, user.profile.read, user.scheduled_sends.create, user.scheduled_sends.delete, user.scheduled_sends.read, user.scheduled_sends.update, user.webhooks.event.settings.create, user.webhooks.event.settings.delete, user.webhooks.event.settings.read, user.webhooks.event.settings.update, user.webhooks.event.test.create, user.webhooks.event.test.read, user.webhooks.event.test.update, validations.email.create, validations.email.read
+  - Legacy teammate 'brian.mcginty@corespecialty.com' on subuser 'lau-marketing' marked for removal (not-found-in-entra).
+  - Legacy teammate 'carly.jones@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'dale.bennett@corespecialty.com' on subuser 'lau-marketing' marked for removal (not-found-in-entra).
+  - Legacy teammate 'david.purviance@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'haley.farrell@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'jeffrey.sutton@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'jessica.lavalley@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'julie.kidwell@corespecialty.com' on subuser 'Internal Email Communications' mapped to 'accountant' with extra scope(s): 2fa_exempt, 2fa_required, access_settings.activity.read, access_settings.whitelist.create, access_settings.whitelist.delete, access_settings.whitelist.read, access_settings.whitelist.update, alerts.create, alerts.delete, alerts.read, alerts.update, asm.groups.create, asm.groups.delete, asm.groups.read, asm.groups.suppressions.create, asm.groups.suppressions.delete, asm.groups.suppressions.read, asm.groups.suppressions.update, asm.groups.update, asm.suppressions.global.create, asm.suppressions.global.delete, asm.suppressions.global.read, asm.suppressions.global.update, categories.create, categories.delete, categories.update, design_library.create, design_library.delete, design_library.read, design_library.update, di.bounce_block_classification.read, email_testing.read, email_testing.write, mail_settings.address_whitelist.create, mail_settings.address_whitelist.delete, mail_settings.address_whitelist.read, mail_settings.address_whitelist.update, mail_settings.bcc.create, mail_settings.bcc.delete, mail_settings.bcc.read, mail_settings.bcc.update, mail_settings.bounce_purge.create, mail_settings.bounce_purge.delete, mail_settings.bounce_purge.read, mail_settings.bounce_purge.update, mail_settings.footer.create, mail_settings.footer.delete, mail_settings.footer.read, mail_settings.footer.update, mail_settings.forward_bounce.create, mail_settings.forward_bounce.delete, mail_settings.forward_bounce.read, mail_settings.forward_bounce.update, mail_settings.forward_spam.create, mail_settings.forward_spam.delete, mail_settings.forward_spam.read, mail_settings.forward_spam.update, mail_settings.plain_content.create, mail_settings.plain_content.delete, mail_settings.plain_content.read, mail_settings.plain_content.update, mail_settings.spam_check.create, mail_settings.spam_check.delete, mail_settings.spam_check.read, mail_settings.spam_check.update, mail_settings.template.create, mail_settings.template.delete, mail_settings.template.read, mail_settings.template.update, mail.batch.create, mail.batch.delete, mail.batch.read, mail.batch.update, mail.send, marketing.read, partner_settings.new_relic.create, partner_settings.new_relic.delete, partner_settings.new_relic.read, partner_settings.new_relic.update, partner_settings.sendwithus.create, partner_settings.sendwithus.delete, partner_settings.sendwithus.read, partner_settings.sendwithus.update, recipients.erasejob.create, recipients.erasejob.read, sender_verification_eligible, suppression.blocks.create, suppression.blocks.delete, suppression.blocks.read, suppression.blocks.update, suppression.bounces.create, suppression.bounces.delete, suppression.bounces.read, suppression.bounces.update, suppression.create, suppression.delete, suppression.invalid_emails.create, suppression.invalid_emails.delete, suppression.invalid_emails.read, suppression.invalid_emails.update, suppression.read, suppression.spam_reports.create, suppression.spam_reports.delete, suppression.spam_reports.read, suppression.spam_reports.update, suppression.unsubscribes.create, suppression.unsubscribes.delete, suppression.unsubscribes.read, suppression.unsubscribes.update, suppression.update, templates.create, templates.delete, templates.read, templates.update, templates.versions.activate.create, templates.versions.activate.delete, templates.versions.activate.read, templates.versions.activate.update, templates.versions.create, templates.versions.delete, templates.versions.read, templates.versions.update, tracking_settings.click.create, tracking_settings.click.delete, tracking_settings.click.read, tracking_settings.click.update, tracking_settings.google_analytics.create, tracking_settings.google_analytics.delete, tracking_settings.google_analytics.read, tracking_settings.google_analytics.update, tracking_settings.open.create, tracking_settings.open.delete, tracking_settings.open.read, tracking_settings.open.update, tracking_settings.subscription.create, tracking_settings.subscription.delete, tracking_settings.subscription.read, tracking_settings.subscription.update, user.profile.read, user.scheduled_sends.create, user.scheduled_sends.delete, user.scheduled_sends.read, user.scheduled_sends.update, user.webhooks.event.settings.create, user.webhooks.event.settings.delete, user.webhooks.event.settings.read, user.webhooks.event.settings.update, user.webhooks.event.test.create, user.webhooks.event.test.read, user.webhooks.event.test.update, validations.email.create, validations.email.read
+  - Legacy teammate 'kathleen.Schwartz@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'linda.tapia@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'lisa.kamuf@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'melissa.pelham@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'natalie.galindo@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'nicholas.Edwards@corespecialty.com' on subuser 'lau-marketing' marked for removal (entra-user-disabled).
+  - Legacy teammate 'Nick.Luchetta@corespecialty.com' on subuser 'CoreTritonRelay' marked for removal (not-found-in-entra).
+  - Legacy teammate 'peter.barnes@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'shelby.pugh@corespecialty.com' on subuser 'Yosemite Application Relay' mapped to 'accountant' with extra scope(s): 2fa_exempt, 2fa_required, access_settings.activity.read, access_settings.whitelist.read, alerts.read, api_keys.read, asm.groups.read, email_testing.read, ips.pools.ips.read, ips.pools.read, ips.read, ips.warmup.read, mail_settings.address_whitelist.read, mail_settings.bcc.read, mail_settings.bounce_purge.update, mail_settings.footer.read, mail_settings.forward_bounce.read, mail_settings.forward_spam.read, mail_settings.plain_content.read, mail_settings.spam_check.read, mail_settings.template.read, mail.batch.read, messages.read, partner_settings.new_relic.read, partner_settings.sendwithus.read, sender_verification_eligible, suppression.read, templates.read, templates.versions.read, tracking_settings.click.read, tracking_settings.google_analytics.read, tracking_settings.open.read, tracking_settings.subscription.read, user.profile.read, user.scheduled_sends.read, user.webhooks.event.settings.read, user.webhooks.event.test.read, user.webhooks.parse.settings.read
+  - Legacy teammate 'sonja.ng@corespecialty.com' on subuser 'lau-marketing' marked for removal (entra-user-disabled).
+  - Legacy teammate 'timothy.krofchik@corespecialty.com' on subuser 'Internal Email Communications DEV' marked for removal (entra-user-disabled).
+  - Legacy teammate 'tomasso.campisi@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Legacy teammate 'zena.contrades@corespecialty.com' on subuser 'lau-marketing' did not map to a known persona (65 scope(s)). Manual mapping needed.
+  - Parent teammate 'alyssa.plewacki@corespecialty.com' on subuser 'quicksilver-nonprod' has custom scopes (34); no persona match. Manual mapping needed.
+  - Parent teammate 'alyssa.plewacki@corespecialty.com' on subuser 'quicksilver-prod' has custom scopes (34); no persona match. Manual mapping needed.
+  - Parent teammate 'beau.davis@corespecialty.com' on subuser 'quicksilver-nonprod' has custom scopes (34); no persona match. Manual mapping needed.
+  - Parent teammate 'beau.davis@corespecialty.com' on subuser 'quicksilver-prod' has custom scopes (34); no persona match. Manual mapping needed.
+  - Parent teammate 'earl.texter@corespecialty.com' on subuser 'CoreTritonRelay' has custom scopes (16); no persona match. Manual mapping needed.
+  - Parent teammate 'earl.texter@corespecialty.com' on subuser 'duckcreek-dev-qa-uat' has custom scopes (16); no persona match. Manual mapping needed.
+  - Parent teammate 'earl.texter@corespecialty.com' on subuser 'duckcreek-prod' has custom scopes (16); no persona match. Manual mapping needed.
+  - Parent teammate 'misty.hunter@corespecialty.com' on subuser 'quicksilver-nonprod' has custom scopes (34); no persona match. Manual mapping needed.
+  - Parent teammate 'misty.hunter@corespecialty.com' on subuser 'quicksilver-prod' has custom scopes (34); no persona match. Manual mapping needed.
+  - Parent teammate 'sarah.gleich@corespecialty.com' on subuser 'quicksilver-nonprod' has custom scopes (34); no persona match. Manual mapping needed.
+  - Parent teammate 'sarah.gleich@corespecialty.com' on subuser 'quicksilver-prod' has custom scopes (34); no persona match. Manual mapping needed.
+
+Disabled/NotFound Entra Users in SendGrid
+  Removal candidates: 6
+
+Teammate                           Email                              Scope   Subuser                           Reason
+--------                           -----                              -----   -------                           ------
+brian.mcginty@corespecialty.com    brian.mcginty@corespecialty.com    subuser lau-marketing                     not-found-in-entra
+dale.bennett@corespecialty.com     dale.bennett@corespecialty.com     subuser lau-marketing                     not-found-in-entra
+nicholas.Edwards@corespecialty.com nicholas.edwards@corespecialty.com subuser lau-marketing                     entra-user-disabled
+Nick.Luchetta@corespecialty.com    nick.luchetta@corespecialty.com    subuser CoreTritonRelay                   not-found-in-entra
+sonja.ng@corespecialty.com         sonja.ng@corespecialty.com         subuser lau-marketing                     entra-user-disabled
+timothy.krofchik@corespecialty.com timothy.krofchik@corespecialty.com subuser Internal Email Communications DEV entra-user-disabled
+
+  Applying SendGrid removals...
+  Removed teammate: brian.mcginty@corespecialty.com (subuser)                                                           
+  Removed teammate: dale.bennett@corespecialty.com (subuser)                                                            
+  Removed teammate: nicholas.Edwards@corespecialty.com (subuser)                                                        
+  Removed teammate: Nick.Luchetta@corespecialty.com (subuser)                                                           
+  Removed teammate: sonja.ng@corespecialty.com (subuser)                                                                
+  Removed teammate: timothy.krofchik@corespecialty.com (subuser)                                                        
+
+SSO Access Group Check (cs-ea-Sendgrid-users)
+  Required users : 29
+  Current members: 15
+  Missing users  : 16
+  Users missing from SSO access group:
+    - aimie.reese@corespecialty.com
+    - amanda.hillquist@corespecialty.com
+    - carly.jones@corespecialty.com
+    - david.purviance@corespecialty.com
+    - haley.farrell@corespecialty.com
+    - jeffrey.sutton@corespecialty.com
+    - jessica.lavalley@corespecialty.com
+    - kathleen.schwartz@corespecialty.com
+    - linda.tapia@corespecialty.com
+    - lisa.kamuf@corespecialty.com
+    - melissa.pelham@corespecialty.com
+    - natalie.galindo@corespecialty.com
+    - peter.barnes@corespecialty.com
+    - shelby.pugh@corespecialty.com
+    - tomasso.campisi@corespecialty.com
+    - zena.contrades@corespecialty.com
+  [WhatIf] Would add missing users to cs-ea-Sendgrid-users.
+
+Exporting proposed changes to C:\Users\Clayton.Smith\GitHub Repo Clones\Clayton_M365_Scripts\Sendgrid\SendGridPlan_20260914-095627
+  01-groups-to-create.csv                  121 row(s)
+  02-group-memberships.csv                 8 row(s)
+  03-sendgrid-teammate-removals.csv        6 row(s)
+  04-legacy-teammate-migrations.csv        20 row(s)
+  05-sso-group-additions.csv               16 row(s)
+  06-warnings.csv                          37 row(s)
+PS C:\Users\Clayton.Smith\GitHub Repo Clones\Clayton_M365_Scripts> 
