@@ -1457,6 +1457,17 @@ foreach ($personaKey in @($SendGridPersonaScopes.Keys)) {
 	$SendGridSubuserPersonaDroppedScopes[$personaKey] = @($SendGridPersonaScopes[$personaKey] | Where-Object { -not $subuserAllowedScopeSet.Contains($_) })
 }
 
+# The SendGrid UI gates the subuser "Marketing" tab behind the newer marketing.*
+# read scopes, not the legacy marketing_campaigns.* scopes the documented
+# persona lists carry. Personas that grant campaigns access (marketer,
+# developer) get them added so the tab actually shows for those teammates.
+$SendGridSubuserMarketingUiScopes = @('marketing.read', 'marketing.automation.read')
+foreach ($personaKey in @($SendGridSubuserPersonaScopes.Keys)) {
+	if (@($SendGridSubuserPersonaScopes[$personaKey]) -contains 'marketing_campaigns.read') {
+		$SendGridSubuserPersonaScopes[$personaKey] = @(@($SendGridSubuserPersonaScopes[$personaKey]) + $SendGridSubuserMarketingUiScopes | Select-Object -Unique)
+	}
+}
+
 function Get-SendGridAdminRoleSpec {
 	[CmdletBinding()]
 	param()

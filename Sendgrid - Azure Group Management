@@ -41,6 +41,9 @@
 # - Restricted subuser_access accepts a different, smaller scope list. Subuser
 #   templates are computed at load as: persona list INTERSECT
 #   $SendGridSubuserRestrictedScopes. Dropped scopes are printed at startup.
+# - Personas with campaigns access (marketer, developer) additionally get
+#   marketing.read + marketing.automation.read: the UI gates the subuser
+#   "Marketing" tab behind those, not the legacy marketing_campaigns.* scopes.
 #
 # Sync flow
 # 1) Bootstrap/auth (Delinea -> SendGrid API key + Graph certificate).
