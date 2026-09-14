@@ -144,7 +144,7 @@ function New-SendGridClientFromDelinea {
 	return New-SendGridClient -ApiKey $apiKey -Region $Region -DefaultPageSize $DefaultPageSize
 }
 
-function Invoke-SendGridApiRequest {
+function Invoke-SendGridRequest {
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory)]
@@ -234,6 +234,9 @@ function Invoke-SendGridApiRequest {
 	}
 }
 
+# Backward-compatible alias; 'Sendgrid - Azure Group Management' expects Invoke-SendGridRequest.
+Set-Alias -Name Invoke-SendGridApiRequest -Value Invoke-SendGridRequest
+
 function Invoke-SendGridPagedRequest {
 	[CmdletBinding()]
 	param(
@@ -273,7 +276,7 @@ function Invoke-SendGridPagedRequest {
 		$queryParams['limit'] = $PageSize
 		$queryParams['offset'] = $offset
 
-		$page = Invoke-SendGridApiRequest -Client $Client -Method GET -Path $Path -Query $queryParams -OnBehalfOf $OnBehalfOf -BaseUri $BaseUri
+		$page = Invoke-SendGridRequest -Client $Client -Method GET -Path $Path -Query $queryParams -OnBehalfOf $OnBehalfOf -BaseUri $BaseUri
 
 		$pageItems = if ([string]::IsNullOrWhiteSpace($ResponseProperty)) {
 			ConvertTo-SendGridArray -InputObject $page
@@ -315,7 +318,7 @@ function Test-SendGridApiKey {
 	)
 
 	try {
-		$null = Invoke-SendGridApiRequest -Client $Client -Method GET -Path '/v3/scopes'
+		$null = Invoke-SendGridRequest -Client $Client -Method GET -Path '/v3/scopes'
 		return $true
 	}
 	catch {
@@ -330,7 +333,7 @@ function Get-SendGridScopes {
 		[pscustomobject]$Client
 	)
 
-	Invoke-SendGridApiRequest -Client $Client -Method GET -Path '/v3/scopes'
+	Invoke-SendGridRequest -Client $Client -Method GET -Path '/v3/scopes'
 }
 
 function Get-SendGridSubusers {
@@ -368,7 +371,7 @@ function Get-SendGridSubuser {
 	)
 
 	$encoded = [uri]::EscapeDataString($Username)
-	Invoke-SendGridApiRequest -Client $Client -Method GET -Path "/v3/subusers/$encoded"
+	Invoke-SendGridRequest -Client $Client -Method GET -Path "/v3/subusers/$encoded"
 }
 
 function New-SendGridSubuser {
@@ -396,7 +399,7 @@ function New-SendGridSubuser {
 		ips      = @($Ips)
 	}
 
-	Invoke-SendGridApiRequest -Client $Client -Method POST -Path '/v3/subusers' -Body $body
+	Invoke-SendGridRequest -Client $Client -Method POST -Path '/v3/subusers' -Body $body
 }
 
 function Remove-SendGridSubuser {
@@ -411,7 +414,7 @@ function Remove-SendGridSubuser {
 
 	$encoded = [uri]::EscapeDataString($Username)
 	if ($PSCmdlet.ShouldProcess($Username, 'Delete SendGrid subuser')) {
-		Invoke-SendGridApiRequest -Client $Client -Method DELETE -Path "/v3/subusers/$encoded" | Out-Null
+		Invoke-SendGridRequest -Client $Client -Method DELETE -Path "/v3/subusers/$encoded" | Out-Null
 	}
 }
 
@@ -443,7 +446,7 @@ function Get-SendGridApiKey {
 	)
 
 	$encoded = [uri]::EscapeDataString($ApiKeyId)
-	Invoke-SendGridApiRequest -Client $Client -Method GET -Path "/v3/api_keys/$encoded" -OnBehalfOf $OnBehalfOf
+	Invoke-SendGridRequest -Client $Client -Method GET -Path "/v3/api_keys/$encoded" -OnBehalfOf $OnBehalfOf
 }
 
 function New-SendGridApiKey {
@@ -466,7 +469,7 @@ function New-SendGridApiKey {
 		scopes = @($Scopes)
 	}
 
-	Invoke-SendGridApiRequest -Client $Client -Method POST -Path '/v3/api_keys' -Body $body -OnBehalfOf $OnBehalfOf
+	Invoke-SendGridRequest -Client $Client -Method POST -Path '/v3/api_keys' -Body $body -OnBehalfOf $OnBehalfOf
 }
 
 function Remove-SendGridApiKey {
@@ -483,7 +486,7 @@ function Remove-SendGridApiKey {
 
 	$encoded = [uri]::EscapeDataString($ApiKeyId)
 	if ($PSCmdlet.ShouldProcess($ApiKeyId, 'Delete SendGrid API key')) {
-		Invoke-SendGridApiRequest -Client $Client -Method DELETE -Path "/v3/api_keys/$encoded" -OnBehalfOf $OnBehalfOf | Out-Null
+		Invoke-SendGridRequest -Client $Client -Method DELETE -Path "/v3/api_keys/$encoded" -OnBehalfOf $OnBehalfOf | Out-Null
 	}
 }
 
@@ -515,7 +518,7 @@ function Get-SendGridTeammate {
 	)
 
 	$encoded = [uri]::EscapeDataString($TeammateName)
-	Invoke-SendGridApiRequest -Client $Client -Method GET -Path "/v3/teammates/$encoded" -OnBehalfOf $OnBehalfOf
+	Invoke-SendGridRequest -Client $Client -Method GET -Path "/v3/teammates/$encoded" -OnBehalfOf $OnBehalfOf
 }
 
 function New-SendGridSsoTeammate {
@@ -535,8 +538,19 @@ function New-SendGridSsoTeammate {
 
 		[string[]]$Scopes = @('user.profile.read', 'user.profile.update'),
 
-		[bool]$IsAdmin = $false
+		[bool]$IsAdmin = $false,
+
+		# One entry per subuser: @{ id = <subuser id>; permission_type = 'admin' } or
+		# @{ id = <subuser id>; permission_type = 'restricted'; scopes = @(...) }
+		[object[]]$SubuserAccess
 	)
+
+	# SendGrid constraint: a non-admin teammate is EITHER parent-scoped (scopes)
+	# OR subuser-scoped (subuser_access); the two cannot be combined.
+	$hasSubuserAccess = $PSBoundParameters.ContainsKey('SubuserAccess') -and @($SubuserAccess).Count -gt 0
+	if ($hasSubuserAccess -and $PSBoundParameters.ContainsKey('Scopes')) {
+		throw 'A teammate cannot have both parent scopes and subuser_access. Pass -Scopes or -SubuserAccess, not both.'
+	}
 
 	$body = @{
 		email      = $Email
@@ -544,10 +558,17 @@ function New-SendGridSsoTeammate {
 		last_name  = $LastName
 		is_sso     = $true
 		is_admin   = $IsAdmin
-		scopes     = @($Scopes)
 	}
 
-	Invoke-SendGridApiRequest -Client $Client -Method POST -Path '/v3/sso/teammates' -Body $body
+	if ($hasSubuserAccess) {
+		$body['has_restricted_subuser_access'] = $true
+		$body['subuser_access'] = @($SubuserAccess)
+	}
+	elseif (-not $IsAdmin) {
+		$body['scopes'] = @($Scopes)
+	}
+
+	Invoke-SendGridRequest -Client $Client -Method POST -Path '/v3/sso/teammates' -Body $body
 }
 
 function Set-SendGridTeammateSubuserAccess {
@@ -574,7 +595,7 @@ function Set-SendGridTeammateSubuserAccess {
 		subuser_access                = @($SubuserAccess)
 	}
 
-	Invoke-SendGridApiRequest -Client $Client -Method PATCH -Path "/v3/sso/teammates/$encoded" -Body $body
+	Invoke-SendGridRequest -Client $Client -Method PATCH -Path "/v3/sso/teammates/$encoded" -Body $body
 }
 
 function Get-SendGridTeammateSubuserAccess {
@@ -620,9 +641,9 @@ function Get-SendGridTeammateSubuserAccess {
 			$query['after_subuser_id'] = $afterSubuserId
 		}
 
-		$response = Invoke-SendGridApiRequest -Client $Client -Method GET -Path "/v3/teammates/$encoded/subuser_access" -Query $query
+		$response = Invoke-SendGridRequest -Client $Client -Method GET -Path "/v3/teammates/$encoded/subuser_access" -Query $query
 		$hasRestrictedSubuserAccess = [bool](Get-OptionalNestedPropertyValue -InputObject $response -PropertyName 'has_restricted_subuser_access' -Default $false)
-		foreach ($row in @(ConvertTo-SendGridArray -InputObject $response.subuser_access)) {
+		foreach ($row in @(ConvertTo-SendGridArray -InputObject (Get-OptionalNestedPropertyValue -InputObject $response -PropertyName 'subuser_access'))) {
 			[void]$result.Add($row)
 		}
 
@@ -648,12 +669,15 @@ function Remove-SendGridTeammate {
 		[pscustomobject]$Client,
 
 		[Parameter(Mandatory)]
-		[string]$TeammateName
+		[string]$TeammateName,
+
+		[string]$OnBehalfOf
 	)
 
 	$encoded = [uri]::EscapeDataString($TeammateName)
-	if ($PSCmdlet.ShouldProcess($TeammateName, 'Delete SendGrid teammate')) {
-		Invoke-SendGridApiRequest -Client $Client -Method DELETE -Path "/v3/teammates/$encoded" | Out-Null
+	$target = if ([string]::IsNullOrWhiteSpace($OnBehalfOf)) { $TeammateName } else { "$TeammateName (subuser: $OnBehalfOf)" }
+	if ($PSCmdlet.ShouldProcess($target, 'Delete SendGrid teammate')) {
+		Invoke-SendGridRequest -Client $Client -Method DELETE -Path "/v3/teammates/$encoded" -OnBehalfOf $OnBehalfOf | Out-Null
 	}
 }
 
@@ -666,7 +690,7 @@ function Get-SendGridVerifiedSenders {
 		[string]$OnBehalfOf
 	)
 
-	Invoke-SendGridApiRequest -Client $Client -Method GET -Path '/v3/verified_senders' -OnBehalfOf $OnBehalfOf
+	Invoke-SendGridRequest -Client $Client -Method GET -Path '/v3/verified_senders' -OnBehalfOf $OnBehalfOf
 }
 
 function New-SendGridVerifiedSender {
@@ -681,7 +705,7 @@ function New-SendGridVerifiedSender {
 		[string]$OnBehalfOf
 	)
 
-	Invoke-SendGridApiRequest -Client $Client -Method POST -Path '/v3/verified_senders' -Body $Sender -OnBehalfOf $OnBehalfOf
+	Invoke-SendGridRequest -Client $Client -Method POST -Path '/v3/verified_senders' -Body $Sender -OnBehalfOf $OnBehalfOf
 }
 
 function Remove-SendGridVerifiedSender {
@@ -698,7 +722,7 @@ function Remove-SendGridVerifiedSender {
 
 	$encoded = [uri]::EscapeDataString($SenderId)
 	if ($PSCmdlet.ShouldProcess($SenderId, 'Delete SendGrid verified sender')) {
-		Invoke-SendGridApiRequest -Client $Client -Method DELETE -Path "/v3/verified_senders/$encoded" -OnBehalfOf $OnBehalfOf | Out-Null
+		Invoke-SendGridRequest -Client $Client -Method DELETE -Path "/v3/verified_senders/$encoded" -OnBehalfOf $OnBehalfOf | Out-Null
 	}
 }
 
@@ -715,7 +739,7 @@ function Get-SendGridInboundParseSettings {
 	)
 
 	$baseUri = if ($PSBoundParameters.ContainsKey('Region')) { Get-SendGridBaseUri -Region $Region } else { $null }
-	Invoke-SendGridApiRequest -Client $Client -Method GET -Path '/v3/user/webhooks/parse/settings' -OnBehalfOf $OnBehalfOf -BaseUri $baseUri
+	Invoke-SendGridRequest -Client $Client -Method GET -Path '/v3/user/webhooks/parse/settings' -OnBehalfOf $OnBehalfOf -BaseUri $baseUri
 }
 
 function New-SendGridInboundParseSetting {
@@ -748,7 +772,7 @@ function New-SendGridInboundParseSetting {
 		send_raw   = $SendRaw
 	}
 
-	Invoke-SendGridApiRequest -Client $Client -Method POST -Path '/v3/user/webhooks/parse/settings' -Body $body -OnBehalfOf $OnBehalfOf -BaseUri $baseUri
+	Invoke-SendGridRequest -Client $Client -Method POST -Path '/v3/user/webhooks/parse/settings' -Body $body -OnBehalfOf $OnBehalfOf -BaseUri $baseUri
 }
 
 function Remove-SendGridInboundParseSetting {
@@ -769,7 +793,7 @@ function Remove-SendGridInboundParseSetting {
 	$baseUri = if ($PSBoundParameters.ContainsKey('Region')) { Get-SendGridBaseUri -Region $Region } else { $null }
 	$encoded = [uri]::EscapeDataString($Hostname)
 	if ($PSCmdlet.ShouldProcess($Hostname, 'Delete SendGrid inbound parse setting')) {
-		Invoke-SendGridApiRequest -Client $Client -Method DELETE -Path "/v3/user/webhooks/parse/settings/$encoded" -OnBehalfOf $OnBehalfOf -BaseUri $baseUri | Out-Null
+		Invoke-SendGridRequest -Client $Client -Method DELETE -Path "/v3/user/webhooks/parse/settings/$encoded" -OnBehalfOf $OnBehalfOf -BaseUri $baseUri | Out-Null
 	}
 }
 
@@ -830,6 +854,6 @@ function Send-SendGridMailMessage {
 		content          = $content.ToArray()
 	}
 
-	Invoke-SendGridApiRequest -Client $Client -Method POST -Path '/v3/mail/send' -Body $body -OnBehalfOf $OnBehalfOf -RawResponse
+	Invoke-SendGridRequest -Client $Client -Method POST -Path '/v3/mail/send' -Body $body -OnBehalfOf $OnBehalfOf -RawResponse
 }
 
