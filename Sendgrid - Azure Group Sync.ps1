@@ -16,6 +16,9 @@
 #   A Graph lookup that fails for any other reason (throttling, outage) marks
 #   the user 'unknown' and the teammate is left alone — lookup failure is never
 #   treated as permission to delete.
+# - Optional CSV export ($ExportStateCsv): group-memberships.csv (which users
+#   are in which cs-sendgrid-* group and what role that implies) and
+#   sendgrid-roles.csv (what each parent teammate actually holds in SendGrid).
 #
 # Conflict rules (from the management spec)
 # - admin > admin-ro > subuser access. Admin ignores all other groups.
@@ -55,6 +58,8 @@ $ApplyEntraGroups = $false      # Create missing baseline role groups (and the S
 $ApplySsoAccessGroup = $false   # Add role-group members to the SSO access group
 $ApplyTeammateChanges = $false  # Create/update SendGrid teammates from group membership
 $ApplyTeammateRemovals = $false # Remove teammates whose Entra user is disabled or deleted
+$ExportStateCsv = $true # Export group memberships + current SendGrid roles as CSV files
+$ExportFolderOverride = $null # Optional export folder; default: <script folder>\SendGridSync_<timestamp>
 
 # Scopes SendGrid adds on its own; ignored when comparing desired vs current.
 $SendGridImplicitScopes = @(
@@ -355,6 +360,8 @@ Write-Host '2) Desired state from Entra groups' -ForegroundColor Cyan
 $desiredByUpn = New-Object 'System.Collections.Generic.Dictionary[string, object]' ([System.StringComparer]::OrdinalIgnoreCase)
 # upn -> Entra user record from group membership (Id, names, AccountEnabled)
 $userRecordByUpn = New-Object 'System.Collections.Generic.Dictionary[string, object]' ([System.StringComparer]::OrdinalIgnoreCase)
+# One row per (group, member) pair, for the CSV export.
+$membershipExportRows = New-Object System.Collections.Generic.List[object]
 
 foreach ($groupName in @($groupIdByName.Keys | Sort-Object)) {
 	$role = Resolve-SendGridRoleFromGroupName -GroupName $groupName
@@ -376,6 +383,15 @@ foreach ($groupName in @($groupIdByName.Keys | Sort-Object)) {
 		}
 
 		$userRecordByUpn[$upn] = $member
+
+		[void]$membershipExportRows.Add([pscustomobject]@{
+			GroupName = $groupName
+			MemberUpn = $upn
+			RoleKind  = [string]$role.RoleKey
+			Subuser   = if ($role.RoleKey -eq 'subuser-access') { [string]$subuserByToken[$role.Subuser].Name } else { '' }
+			Role      = [string]$role.Role
+			Enabled   = [bool](Get-OptionalObjectProperty -InputObject $member -Name 'AccountEnabled' -Default $true)
+		})
 
 		if (-not $desiredByUpn.ContainsKey($upn)) {
 			$desiredByUpn[$upn] = [pscustomobject]@{
@@ -815,6 +831,88 @@ if ($null -ne $ssoGroupId) {
 			Add-SyncWarning "Failed to add '$upn' to '$SsoAccessGroupName': $($_.Exception.Message)"
 		}
 	}
+}
+
+# --- 7) State CSV export ------------------------------------------------------
+if ($ExportStateCsv) {
+	$exportFolder = if (-not [string]::IsNullOrWhiteSpace([string]$ExportFolderOverride)) {
+		[string]$ExportFolderOverride
+	}
+	else {
+		Join-Path $ScriptDir ('SendGridSync_{0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+	}
+
+	$null = New-Item -ItemType Directory -Path $exportFolder -Force
+
+	Write-Host ''
+	Write-Host ("7) Exporting state CSVs to {0}" -f $exportFolder) -ForegroundColor Cyan
+
+	Export-SendGridPlanCsv -Path (Join-Path $exportFolder 'group-memberships.csv') -Columns @('GroupName', 'MemberUpn', 'RoleKind', 'Subuser', 'Role', 'Enabled') -Rows $membershipExportRows.ToArray()
+
+	$subuserNameById = New-Object 'System.Collections.Generic.Dictionary[int, string]'
+	foreach ($subuserInfo in $subuserByToken.Values) {
+		$subuserNameById[[int]$subuserInfo.Id] = [string]$subuserInfo.Name
+	}
+
+	$roleRows = New-Object System.Collections.Generic.List[object]
+	foreach ($state in $teammateStates) {
+		$baseRow = [ordered]@{
+			Teammate    = $state.LookupKey
+			EntraUpn    = [string]$state.EntraState.Upn
+			EntraStatus = [string]$state.EntraState.Status
+		}
+
+		if ($state.Removed) {
+			[void]$roleRows.Add([pscustomobject]($baseRow + [ordered]@{ AccessScope = '(removed this run)'; Subuser = ''; Role = ''; ScopeCount = 0 }))
+			continue
+		}
+
+		if ($state.IsAdmin) {
+			[void]$roleRows.Add([pscustomobject]($baseRow + [ordered]@{ AccessScope = 'account-admin'; Subuser = ''; Role = 'admin'; ScopeCount = 0 }))
+			continue
+		}
+
+		try {
+			$access = Get-SendGridTeammateSubuserAccess -Client $sendGridClient -TeammateName $state.LookupKey
+		}
+		catch {
+			Add-SyncWarning "Could not read access for teammate '$($state.LookupKey)' during export: $(Get-SendGridErrorMessage -ErrorRecord $_)"
+			continue
+		}
+
+		if ($access.HasRestrictedSubuserAccess) {
+			foreach ($entry in @($access.SubuserAccess)) {
+				$entryId = Get-OptionalObjectProperty -InputObject $entry -Name 'id' -Default $null
+				$entrySubuser = if ($null -ne $entryId -and $subuserNameById.ContainsKey([int]$entryId)) { $subuserNameById[[int]$entryId] } else { "id:$entryId" }
+				$permissionType = ([string](Get-OptionalObjectProperty -InputObject $entry -Name 'permission_type' -Default '')).Trim().ToLowerInvariant()
+				$entryScopes = @((Get-OptionalObjectProperty -InputObject $entry -Name 'scopes' -Default @()))
+				$entryRole = if ($permissionType -eq 'admin') {
+					'admin'
+				}
+				else {
+					$resolved = Resolve-SendGridPersonaFromScopes -Scopes $entryScopes -Scope Subuser
+					if ([string]::IsNullOrWhiteSpace([string]$resolved.Persona)) { '(custom)' } else { [string]$resolved.Persona }
+				}
+				[void]$roleRows.Add([pscustomobject]($baseRow + [ordered]@{ AccessScope = 'subuser'; Subuser = $entrySubuser; Role = $entryRole; ScopeCount = $entryScopes.Count }))
+			}
+			continue
+		}
+
+		try {
+			$detail = Get-SendGridTeammate -Client $sendGridClient -TeammateName $state.LookupKey
+		}
+		catch {
+			Add-SyncWarning "Could not read parent scopes for teammate '$($state.LookupKey)' during export: $(Get-SendGridErrorMessage -ErrorRecord $_)"
+			continue
+		}
+
+		$parentScopes = @((Get-OptionalObjectProperty -InputObject $detail -Name 'scopes' -Default @()))
+		$resolved = Resolve-SendGridPersonaFromScopes -Scopes $parentScopes -Scope Parent
+		$parentRole = if ([string]::IsNullOrWhiteSpace([string]$resolved.Persona)) { '(custom)' } else { [string]$resolved.Persona }
+		[void]$roleRows.Add([pscustomobject]($baseRow + [ordered]@{ AccessScope = 'parent'; Subuser = ''; Role = $parentRole; ScopeCount = $parentScopes.Count }))
+	}
+
+	Export-SendGridPlanCsv -Path (Join-Path $exportFolder 'sendgrid-roles.csv') -Columns @('Teammate', 'EntraUpn', 'EntraStatus', 'AccessScope', 'Subuser', 'Role', 'ScopeCount') -Rows $roleRows.ToArray()
 }
 
 # --- Summary ------------------------------------------------------------------

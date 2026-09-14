@@ -230,30 +230,6 @@ function Get-SendGridTeammateLookupKey {
 	return $null
 }
 
-function Export-SendGridPlanCsv {
-	# Writes a header-only file when there are no rows so every run produces the full file set.
-	[CmdletBinding()]
-	param(
-		[Parameter(Mandatory)]
-		[string]$Path,
-
-		[Parameter(Mandatory)]
-		[string[]]$Columns,
-
-		[object[]]$Rows
-	)
-
-	$rowsArray = @($Rows | Where-Object { $null -ne $_ })
-	if ($rowsArray.Count -gt 0) {
-		$rowsArray | Select-Object -Property $Columns | Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding UTF8
-	}
-	else {
-		Set-Content -LiteralPath $Path -Value ('"{0}"' -f ($Columns -join '","')) -Encoding UTF8
-	}
-
-	Write-Host ("  {0,-40} {1} row(s)" -f (Split-Path -Path $Path -Leaf), $rowsArray.Count)
-}
-
 function Add-RequiredGroupEntry {
 	[CmdletBinding()]
 	param(
