@@ -1,0 +1,78 @@
+PS C:\Users\Clayton.Smith\GitHub Repo Clones\Clayton_M365_Scripts> . 'C:\Users\Clayton.Smith\GitHub Repo Clones\Clayton_M365_Scripts\Sendgrid\Sendgrid - Get Teammate Scopes.ps1'
+Reusing cached Delinea token from $env:SS_TOKEN.
+Teammate: clayton.smith@corespecialty.com
+Subuser : Internal Email Communications
+Subuser id: 46513475; teammate has 1 subuser_access entr(y/ies) total.                                                  
+permission_type: restricted
+
+Restricted scopes on 'Internal Email Communications' — 64 scope(s)
+  [no ] marketing.read
+  [no ] marketing.automation.read
+  [YES] marketing_campaigns.read
+  [YES] stats.read
+  Persona match: marketer (superset)
+  Scopes:
+    alerts.create
+    alerts.delete
+    alerts.read
+    alerts.update
+    asm.groups.create
+    asm.groups.delete
+    asm.groups.read
+    asm.groups.update
+    browsers.stats.read
+    categories.read
+    categories.stats.read
+    categories.stats.sums.read
+    clients.desktop.stats.read
+    clients.phone.stats.read
+    clients.stats.read
+    clients.tablet.stats.read
+    clients.webmail.stats.read
+    devices.stats.read
+    email_testing.read
+    email_testing.write
+    geo.stats.read
+    mail_settings.read
+    mail_settings.spam_check.read
+    mail_settings.spam_check.update
+    mail.batch.read
+    mailbox_providers.stats.read
+    marketing_campaigns.create
+    marketing_campaigns.delete
+    marketing_campaigns.read
+    marketing_campaigns.update
+    partner_settings.read
+    stats.global.read
+    stats.read
+    suppression.create
+    suppression.delete
+    suppression.read
+    suppression.update
+    templates.create
+    templates.delete
+    templates.read
+    templates.update
+    templates.versions.activate.create
+    templates.versions.create
+    templates.versions.delete
+    templates.versions.read
+    templates.versions.update
+    tracking_settings.click.read
+    tracking_settings.click.update
+    tracking_settings.google_analytics.read
+    tracking_settings.google_analytics.update
+    tracking_settings.open.read
+    tracking_settings.open.update
+    tracking_settings.read
+    tracking_settings.subscription.read
+    tracking_settings.subscription.update
+    user.account.read
+    user.credits.read
+    user.email.read
+    user.profile.read
+    user.scheduled_sends.read
+    user.settings.enforced_tls.read
+    user.timezone.read
+    user.username.read
+    user.webhooks.parse.stats.read
