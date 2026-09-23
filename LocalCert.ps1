@@ -101,31 +101,50 @@ $cert = New-SelfSignedCertificate @certParams
 Write-Host "Created certificate $($cert.Thumbprint) in $storeLocation." -ForegroundColor Green
 
 # ---- 2) Grant Read on the private key file ----
-# Machine-store private keys are ACL'd to SYSTEM + Administrators only. The key file lives under
-# ProgramData: Crypto\Keys for CNG (KSP) keys, Crypto\RSA\MachineKeys for legacy CSP keys.
+# Machine-store private keys are ACL'd to SYSTEM + Administrators only. The key file can live in
+# several ProgramData folders depending on the provider (-KeySpec Signature yields a legacy CSP key in
+# RSA\MachineKeys, but .NET still opens it as RSACng), so probe every folder for the file name rather
+# than inferring the folder from the .NET key type.
 if ($grantAccounts.Count -gt 0) {
-    $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
-    if ($rsa -is [System.Security.Cryptography.RSACng]) {
-        $keyPath = Join-Path "$env:ProgramData\Microsoft\Crypto\Keys" $rsa.Key.UniqueName
-    } else {
-        $keyPath = Join-Path "$env:ProgramData\Microsoft\Crypto\RSA\MachineKeys" $rsa.CspKeyContainerInfo.UniqueKeyContainerName
-    }
-
     try {
-        $acl = Get-Acl -LiteralPath $keyPath
+        $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
+        $keyName = if ($rsa -is [System.Security.Cryptography.RSACng]) {
+            $rsa.Key.UniqueName
+        } else {
+            $rsa.CspKeyContainerInfo.UniqueKeyContainerName
+        }
+
+        $cryptoRoot = Join-Path $env:ProgramData 'Microsoft\Crypto'
+        $keyDirs    = @('RSA\MachineKeys', 'Keys', 'SystemKeys') | ForEach-Object { Join-Path $cryptoRoot $_ }
+        $keyPath    = $keyDirs | ForEach-Object { Join-Path $_ $keyName } |
+            Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if (-not $keyPath) {
+            throw "Private key file '$keyName' not found under: $($keyDirs -join ', ')"
+        }
+
+        # Read/write only the DACL. Set-Acl also rewrites the owner, which fails on SYSTEM-owned key files.
+        $keyFile = Get-Item -LiteralPath $keyPath -Force
+        $acl     = $keyFile.GetAccessControl('Access')
         foreach ($account in $grantAccounts) {
             $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($account, 'Read', 'Allow')
             $acl.AddAccessRule($rule)
         }
-        Set-Acl -LiteralPath $keyPath -AclObject $acl
+        $keyFile.SetAccessControl($acl)
     } catch {
-        Write-Warning "Certificate $($cert.Thumbprint) was created, but granting private key access failed: $($_.Exception.Message)"
-        Write-Warning "Grant Read manually: certlm.msc > Personal > Certificates > right-click > All Tasks > Manage Private Keys."
-        throw
+        # Roll back so a failed run doesn't leave an orphaned cert + key behind; just re-run after fixing.
+        $grantError = $_
+        Write-Warning "Granting private key access failed: $($grantError.Exception.Message)"
+        Remove-Item -Path (Join-Path $storeLocation $cert.Thumbprint) -DeleteKey -Force -ErrorAction SilentlyContinue
+        if (Test-Path -Path (Join-Path $storeLocation $cert.Thumbprint)) {
+            Write-Warning "Could not remove cert $($cert.Thumbprint); delete it in certlm.msc before re-running."
+        } else {
+            Write-Warning "Removed cert $($cert.Thumbprint) and its private key. Nothing was exported."
+        }
+        throw $grantError
     }
 
     foreach ($account in $grantAccounts) {
-        Write-Host "Granted Read on private key to $($account.Value)." -ForegroundColor Green
+        Write-Host "Granted Read on private key to $($account.Value) ($keyPath)." -ForegroundColor Green
     }
 }
 
