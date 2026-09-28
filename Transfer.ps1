@@ -15,6 +15,15 @@
         Failed items are left alone on later runs unless -RetryFailed is used.
         If no inventory exists yet, one is built first.
 
+    Duplicate protection (safe to rerun):
+        - Target folders are matched by path and only created if missing.
+        - Each copied item is tagged in the target with a hidden property holding its source key.
+          Before copying into a folder, the script reads that folder and skips any item already
+          present (by tag, or by matching search key), marking it Exists. This holds even if the
+          inventory file is lost or rebuilt.
+        - An upload interrupted by a connection error is not blindly resent; it is marked Failed and
+          rechecked against the target on the next -RetryFailed run.
+
     Crash safety:
         Status changes are written immediately to <inventory>.journal and merged into the inventory
         every -CheckpointSeconds and at exit. If the inventory is open in Excel, the merge is
@@ -58,6 +67,10 @@ $ProgressPreference    = 'SilentlyContinue'
 $EwsUrl   = 'https://outlook.office365.com/EWS/Exchange.asmx'
 $AuthBase = "https://login.microsoftonline.com/$TenantId/oauth2/v2.0"
 $Scope    = 'https://outlook.office365.com/EWS.AccessAsUser.All offline_access'
+
+# Hidden property stamped on every copied item in the target (fixed GUID for this tool)
+$TagUri       = '<t:ExtendedFieldURI PropertySetId="6a3e8f1c-2b7d-4c9e-9f0a-5d1b3c7e2a41" PropertyName="MigrationSourceKey" PropertyType="String"/>'
+$SearchKeyUri = '<t:ExtendedFieldURI PropertyTag="0x300B" PropertyType="Binary"/>'
 
 if (-not $InventoryPath) {
     $InventoryPath = 'MailboxCopy_{0}_to_{1}.csv' -f ($SourceMailbox -replace '[^\w.-]', '_'), ($TargetMailbox -replace '[^\w.-]', '_')
@@ -155,7 +168,7 @@ function Get-AccessToken {
 
 #region EWS transport
 function Invoke-Ews {
-    param([Parameter(Mandatory)][string]$Body, [Parameter(Mandatory)][string]$AnchorMailbox)
+    param([Parameter(Mandatory)][string]$Body, [Parameter(Mandatory)][string]$AnchorMailbox, [switch]$NoNetworkRetry)
 
     $envelope = @"
 <?xml version="1.0" encoding="utf-8"?>
@@ -178,6 +191,9 @@ function Invoke-Ews {
                 -ContentType 'text/xml; charset=utf-8' -SkipHttpErrorCheck -TimeoutSec 900
         }
         catch {
+            # For uploads the server may have created the items before the connection dropped,
+            # so resending could duplicate them. Fail instead; the next run checks the target first.
+            if ($NoNetworkRetry) { throw "Connection lost, outcome unknown ($($_.Exception.Message))" }
             $wait = [math]::Min(300, 15 * $attempt)
             Write-Advisory "Connection error ($($_.Exception.Message)), attempt $attempt of $MaxRetries" $wait
             Start-Sleep -Seconds $wait
@@ -310,6 +326,8 @@ function Get-FolderItems([string]$Mailbox, [string]$FolderId) {
       <t:FieldURI FieldURI="item:ItemClass"/>
       <t:FieldURI FieldURI="item:Size"/>
       <t:FieldURI FieldURI="item:DateTimeReceived"/>
+      $SearchKeyUri
+      $TagUri
     </t:AdditionalProperties>
   </m:ItemShape>
   <m:IndexedPageItemView MaxEntriesReturned="500" Offset="$offset" BasePoint="Beginning"/>
@@ -321,17 +339,47 @@ function Get-FolderItems([string]$Mailbox, [string]$FolderId) {
         $list     = Get-Node $rootNode 'Items'
         if ($null -ne $list) {
             foreach ($i in $list.ChildNodes) {
+                $id = (Get-Node $i 'ItemId').GetAttribute('Id')
+                $sk = $null; $tag = $null
+                foreach ($ep in $i.SelectNodes("*[local-name()='ExtendedProperty']")) {
+                    if ((Get-Node $ep 'ExtendedFieldURI').GetAttribute('PropertyName') -eq 'MigrationSourceKey') { $tag = Get-Text $ep 'Value' }
+                    else { $sk = Get-Text $ep 'Value' }
+                }
                 [pscustomobject]@{
-                    Id       = (Get-Node $i 'ItemId').GetAttribute('Id')
-                    Subject  = Get-Text $i 'Subject'
-                    Class    = Get-Text $i 'ItemClass'
-                    Size     = [long](Get-Text $i 'Size')
-                    Received = Get-Text $i 'DateTimeReceived'
+                    Id        = $id
+                    Subject   = Get-Text $i 'Subject'
+                    Class     = Get-Text $i 'ItemClass'
+                    Size      = [long](Get-Text $i 'Size')
+                    Received  = Get-Text $i 'DateTimeReceived'
+                    SearchKey = $sk
+                    Tag       = $tag
+                    Key       = if ($sk) { "sk:$sk" } else { "id:$id" }
                 }
             }
         }
         $offset = [int]$rootNode.GetAttribute('IndexedPagingOffset')
     } while ($rootNode.GetAttribute('IncludesLastItemInRange') -ne 'true')
+}
+
+# Keys of items already in a target folder: tags written by this script, plus search keys
+function Get-TargetKeys([string]$FolderId) {
+    $set = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($it in (Get-FolderItems $TargetMailbox $FolderId)) {
+        if ($it.Tag)       { [void]$set.Add($it.Tag) }
+        if ($it.SearchKey) { [void]$set.Add("sk:$($it.SearchKey)") }
+    }
+    return ,$set
+}
+
+# Stamp uploaded items with their source key; returns one response message per item
+function Set-TargetTag([object[]]$Uploaded) {
+    $changes = -join ($Uploaded | ForEach-Object {
+        '<t:ItemChange><t:ItemId Id="{0}"/><t:Updates><t:SetItemField>{1}<t:Item><t:ExtendedProperty>{1}<t:Value>{2}</t:Value></t:ExtendedProperty></t:Item></t:SetItemField></t:Updates></t:ItemChange>' -f `
+            $_.NewId, $TagUri, (Esc $_.Row.MigrationKey)
+    })
+    $body = "<m:UpdateItem ConflictResolution=`"AlwaysOverwrite`" MessageDisposition=`"SaveOnly`" SendMeetingInvitationsOrCancellations=`"SendToNone`"><m:ItemChanges>$changes</m:ItemChanges></m:UpdateItem>"
+    $xml  = Invoke-Ews -AnchorMailbox $TargetMailbox -Body $body
+    $xml.SelectNodes("//*[local-name()='UpdateItemResponseMessage']")
 }
 #endregion
 
@@ -344,7 +392,10 @@ function Open-Journal {
 
 function Import-Inventory {
     if (Test-Path $InventoryPath) {
-        foreach ($r in (Import-Csv $InventoryPath)) { $script:Rows.Add($r); $script:Index[$r.SourceItemId] = $r }
+        foreach ($r in (Import-Csv $InventoryPath)) {
+            if (-not $r.PSObject.Properties['MigrationKey']) { $r | Add-Member -NotePropertyName MigrationKey -NotePropertyValue "id:$($r.SourceItemId)" }
+            $script:Rows.Add($r); $script:Index[$r.SourceItemId] = $r
+        }
     }
     $pendingJournal = (Test-Path $JournalPath) -and ((Get-Item $JournalPath).Length -gt 0)
     if ($pendingJournal) {
@@ -391,6 +442,10 @@ function Set-ItemStatus($Row, [string]$Status, [string]$TargetItemId, [string]$M
     $script:Journal.WriteLine($csv[1])
 
     $script:Stats[$Status]++
+    if ($Status -eq 'Copied') {
+        Write-Host ('[{0}] Copied #{1}: {2} | {3} ({4:N0} KB)' -f (Get-Date).ToString('HH:mm:ss'), $script:Stats.Copied,
+            $Row.SourceFolder, $Row.Subject, ([long]$Row.SizeBytes / 1KB)) -ForegroundColor Green
+    }
     if ($Status -eq 'Failed') { Write-Warning ('Failed [{0}] {1}: {2}' -f $Row.SourceFolder, $Row.Subject, $Row.Error) }
 
     if (((Get-Date) - $script:LastCheckpoint).TotalSeconds -ge $CheckpointSeconds) { Save-Inventory }
@@ -422,6 +477,7 @@ function Update-Inventory {
                     Error        = ''
                     TargetItemId = ''
                     SourceItemId = $it.Id
+                    MigrationKey = $it.Key
                 }
                 $script:Rows.Add($row); $script:Index[$it.Id] = $row; $n++
             }
@@ -493,7 +549,7 @@ function Copy-Batch([object[]]$Batch, [string]$TargetFolderId) {
                 $parts = foreach ($e in $exported) {
                     '<t:Item CreateAction="CreateNew"><t:ParentFolderId Id="{0}"/><t:Data>{1}</t:Data></t:Item>' -f $TargetFolderId, $e.Data
                 }
-                $xml  = Invoke-Ews -AnchorMailbox $TargetMailbox -Body "<m:UploadItems><m:Items>$(-join $parts)</m:Items></m:UploadItems>"
+                $xml  = Invoke-Ews -AnchorMailbox $TargetMailbox -NoNetworkRetry -Body "<m:UploadItems><m:Items>$(-join $parts)</m:Items></m:UploadItems>"
                 $msgs = @($xml.SelectNodes("//*[local-name()='UploadItemsResponseMessage']"))
                 if ($msgs.Count -ne $exported.Count) { throw "UploadItems returned $($msgs.Count) results for $($exported.Count) items." }
             }
@@ -503,17 +559,32 @@ function Copy-Batch([object[]]$Batch, [string]$TargetFolderId) {
                 $msgs = @()
             }
 
+            $uploaded = [Collections.Generic.List[object]]::new()
             for ($i = 0; $i -lt $msgs.Count; $i++) {
                 $r = $exported[$i].Row; $m = $msgs[$i]
                 $rc = Get-Text $m 'ResponseCode'
                 if ($m.GetAttribute('ResponseClass') -eq 'Success') {
-                    Set-ItemStatus $r 'Copied' (Get-Node $m 'ItemId').GetAttribute('Id') ''
+                    $uploaded.Add([pscustomobject]@{ Row = $r; NewId = (Get-Node $m 'ItemId').GetAttribute('Id') })
                 }
                 elseif ($rc -eq 'ErrorServerBusy' -and $canRetry) {
                     $retry.Add($r); $backoff = [math]::Max($backoff, (Get-BackOffMs $m))
                 }
                 else {
                     Set-ItemStatus $r 'Failed' '' "Upload: $rc $(Get-Text $m 'MessageText')"
+                }
+            }
+
+            # --- Tag copies so reruns can recognize them ---
+            if ($uploaded.Count) {
+                $tagMsgs = @(); $tagErr = ''
+                try { $tagMsgs = @(Set-TargetTag $uploaded.ToArray()) } catch { $tagErr = $_.Exception.Message }
+                for ($i = 0; $i -lt $uploaded.Count; $i++) {
+                    $u = $uploaded[$i]; $note = ''
+                    if ($tagErr) { $note = "Copied, but duplicate-check tag not set: $tagErr" }
+                    elseif ($i -ge $tagMsgs.Count -or $tagMsgs[$i].GetAttribute('ResponseClass') -ne 'Success') {
+                        $note = "Copied, but duplicate-check tag not set: $(if ($i -lt $tagMsgs.Count) { Get-Text $tagMsgs[$i] 'ResponseCode' })"
+                    }
+                    Set-ItemStatus $u.Row 'Copied' $u.NewId $note
                 }
             }
         }
@@ -549,9 +620,22 @@ function Start-Transfer {
             continue
         }
 
-        Write-Host ('{0}: {1} item(s)' -f $group.Name, $group.Count)
+        # Skip anything already in the target folder
+        try { $existing = Get-TargetKeys $targetId }
+        catch {
+            $err = $_.Exception.Message
+            foreach ($r in $group.Group) { Set-ItemStatus $r 'Failed' '' "Target check: $err" }
+            continue
+        }
+        $toCopy = foreach ($r in $group.Group) {
+            if (-not $existing.Add($r.MigrationKey)) { Set-ItemStatus $r 'Exists' '' 'Already in target; not copied again' }
+            else { $r }
+        }
+        $toCopy = @($toCopy)
+
+        Write-Host ('{0}: {1} item(s), {2} to copy' -f $group.Name, $group.Count, $toCopy.Count)
         $batch = [Collections.Generic.List[object]]::new(); $size = 0
-        foreach ($r in $group.Group) {
+        foreach ($r in $toCopy) {
             $s = [long]$r.SizeBytes
             if ($batch.Count -and ($batch.Count -ge $BatchSize -or ($size + $s) -gt $MaxBatchBytes)) {
                 Copy-Batch $batch.ToArray() $targetId
@@ -565,7 +649,7 @@ function Start-Transfer {
 #endregion
 
 #region Main
-$script:Stats          = @{ Copied = 0; Failed = 0; Backoffs = 0; BackoffSeconds = 0 }
+$script:Stats          = @{ Copied = 0; Exists = 0; Failed = 0; Backoffs = 0; BackoffSeconds = 0 }
 $script:Rows           = [Collections.Generic.List[object]]::new()
 $script:Index          = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
 $script:LastCheckpoint = Get-Date
@@ -582,8 +666,8 @@ try {
     }
     else {
         Start-Transfer
-        Write-Host ('Transfer finished. This run: {0} copied, {1} failed, {2} backoff(s) totaling {3:N0} s.' -f `
-            $script:Stats.Copied, $script:Stats.Failed, $script:Stats.Backoffs, $script:Stats.BackoffSeconds) -ForegroundColor Green
+        Write-Host ('Transfer finished. This run: {0} copied, {1} already in target, {2} failed, {3} backoff(s) totaling {4:N0} s.' -f `
+            $script:Stats.Copied, $script:Stats.Exists, $script:Stats.Failed, $script:Stats.Backoffs, $script:Stats.BackoffSeconds) -ForegroundColor Green
         if ($script:Stats.Failed) { Write-Host 'Filter the inventory on Status = Failed for details. Use -RetryFailed to try them again.' }
     }
 }
