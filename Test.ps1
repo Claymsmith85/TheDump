@@ -11,15 +11,25 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-# Sign in (username/password)
-$cred = Get-Credential -UserName $UserName -Message 'Password'
-$tok = Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token" -Body @{
-    grant_type = 'password'
-    client_id  = $ClientId
-    scope      = 'https://outlook.office365.com/EWS.AccessAsUser.All'
-    username   = $cred.UserName
-    password   = $cred.GetNetworkCredential().Password
+# Sign in (username/password). The credential is cached in $global:EwsCred for this PowerShell session.
+$cred = $global:EwsCred
+if (-not $cred -or $cred.UserName -ne $UserName) {
+    $cred = Get-Credential -UserName $UserName -Message 'Password'
 }
+try {
+    $tok = Invoke-RestMethod -Method Post -Uri "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token" -Body @{
+        grant_type = 'password'
+        client_id  = $ClientId
+        scope      = 'https://outlook.office365.com/EWS.AccessAsUser.All'
+        username   = $cred.UserName
+        password   = $cred.GetNetworkCredential().Password
+    }
+}
+catch {
+    Remove-Variable EwsCred -Scope Global -ErrorAction SilentlyContinue   # don't keep a bad password
+    throw
+}
+$global:EwsCred = $cred
 
 # Show who the token is for and what it allows
 $p = $tok.access_token.Split('.')[1].Replace('-', '+').Replace('_', '/')
