@@ -38,6 +38,7 @@ param(
     [Parameter(Mandatory)][string]$ClientId,
     [Parameter(Mandatory)][string]$SourceMailbox,
     [Parameter(Mandatory)][string]$TargetMailbox,
+    [string]$UserName,
     [string]$InventoryPath,
     [switch]$InventoryOnly,
     [switch]$RetryFailed,
@@ -106,7 +107,8 @@ function Set-Token($r) {
 
 function Connect-Ews {
     # Username/password sign-in (ROPC). Does not work if the account must complete MFA.
-    $cred = Get-Credential -Message 'Account with FullAccess on both mailboxes (UPN)'
+    $msg  = 'Account with FullAccess on both mailboxes (UPN)'
+    $cred = if ($UserName) { Get-Credential -UserName $UserName -Message $msg } else { Get-Credential -Message $msg }
     $resp = Invoke-WebRequest -Method Post -Uri "$AuthBase/token" -SkipHttpErrorCheck -Body @{
         grant_type = 'password'
         client_id  = $ClientId
