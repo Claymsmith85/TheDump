@@ -94,6 +94,15 @@ function Test-Excluded([string]$Path, [string[]]$List) {
 function Get-TargetPath([string]$Path) {
     if ($TargetSubfolder) { '\' + $TargetSubfolder.Trim('\') + $Path } else { $Path }
 }
+
+function Write-Advisory([string]$Reason, [double]$Seconds) {
+    $now = Get-Date
+    Write-Host ('[{0}] BACKOFF: {1}. Pausing {2:N0} s, resuming about {3}.' -f `
+        $now.ToString('HH:mm:ss'), $Reason, $Seconds, $now.AddSeconds($Seconds).ToString('HH:mm:ss')) `
+        -ForegroundColor Black -BackgroundColor Yellow
+    $script:Stats.Backoffs++
+    $script:Stats.BackoffSeconds += $Seconds
+}
 #endregion
 
 #region Auth (username/password + refresh)
@@ -107,8 +116,12 @@ function Set-Token($r) {
 
 function Connect-Ews {
     # Username/password sign-in (ROPC). Does not work if the account must complete MFA.
+    # Credential is cached in $global:EwsCred for this PowerShell session.
     $msg  = 'Account with FullAccess on both mailboxes (UPN)'
-    $cred = if ($UserName) { Get-Credential -UserName $UserName -Message $msg } else { Get-Credential -Message $msg }
+    $cred = $global:EwsCred
+    if (-not $cred -or ($UserName -and $cred.UserName -ne $UserName)) {
+        $cred = if ($UserName) { Get-Credential -UserName $UserName -Message $msg } else { Get-Credential -Message $msg }
+    }
     $resp = Invoke-WebRequest -Method Post -Uri "$AuthBase/token" -SkipHttpErrorCheck -Body @{
         grant_type = 'password'
         client_id  = $ClientId
@@ -117,7 +130,11 @@ function Connect-Ews {
         password   = $cred.GetNetworkCredential().Password
     }
     $json = $resp.Content | ConvertFrom-Json
-    if ([int]$resp.StatusCode -ne 200) { throw "Sign-in failed: $($json.error_description)" }
+    if ([int]$resp.StatusCode -ne 200) {
+        Remove-Variable EwsCred -Scope Global -ErrorAction SilentlyContinue   # don't keep a bad password
+        throw "Sign-in failed: $($json.error_description)"
+    }
+    $global:EwsCred = $cred
     Set-Token $json
     Write-Host "Signed in as $($cred.UserName)."
 }
@@ -162,7 +179,7 @@ function Invoke-Ews {
         }
         catch {
             $wait = [math]::Min(300, 15 * $attempt)
-            Write-Warning "EWS request error: $($_.Exception.Message). Retrying in $wait s."
+            Write-Advisory "Connection error ($($_.Exception.Message)), attempt $attempt of $MaxRetries" $wait
             Start-Sleep -Seconds $wait
             continue
         }
@@ -178,7 +195,7 @@ function Invoke-Ews {
             $wait = 30 * $attempt
             if ($content -match 'Name="BackOffMilliseconds">(\d+)<') { $wait = [math]::Ceiling([int]$Matches[1] / 1000) }
             elseif ($resp.Headers['Retry-After']) { $wait = [int]($resp.Headers['Retry-After'] | Select-Object -First 1) }
-            Write-Warning "Throttled (HTTP $code). Waiting $wait s."
+            Write-Advisory "Server throttling (HTTP $code), attempt $attempt of $MaxRetries" $wait
             Start-Sleep -Seconds $wait
             continue
         }
@@ -502,7 +519,7 @@ function Copy-Batch([object[]]$Batch, [string]$TargetFolderId) {
         }
 
         if ($retry.Count) {
-            Write-Warning "$($retry.Count) item(s) throttled. Waiting $([math]::Ceiling($backoff / 1000)) s."
+            Write-Advisory "$($retry.Count) item(s) throttled by server, attempt $attempt of $MaxRetries" ($backoff / 1000)
             Start-Sleep -Milliseconds $backoff
         }
         $queue = $retry.ToArray()
@@ -548,7 +565,7 @@ function Start-Transfer {
 #endregion
 
 #region Main
-$script:Stats          = @{ Copied = 0; Failed = 0 }
+$script:Stats          = @{ Copied = 0; Failed = 0; Backoffs = 0; BackoffSeconds = 0 }
 $script:Rows           = [Collections.Generic.List[object]]::new()
 $script:Index          = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
 $script:LastCheckpoint = Get-Date
@@ -565,7 +582,8 @@ try {
     }
     else {
         Start-Transfer
-        Write-Host ('Transfer finished. This run: {0} copied, {1} failed.' -f $script:Stats.Copied, $script:Stats.Failed) -ForegroundColor Green
+        Write-Host ('Transfer finished. This run: {0} copied, {1} failed, {2} backoff(s) totaling {3:N0} s.' -f `
+            $script:Stats.Copied, $script:Stats.Failed, $script:Stats.Backoffs, $script:Stats.BackoffSeconds) -ForegroundColor Green
         if ($script:Stats.Failed) { Write-Host 'Filter the inventory on Status = Failed for details. Use -RetryFailed to try them again.' }
     }
 }
