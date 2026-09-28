@@ -15,6 +15,14 @@
         Failed items are left alone on later runs unless -RetryFailed is used.
         If no inventory exists yet, one is built first.
 
+    Throttling (per Microsoft's EWS throttling guidance):
+        Exchange Online does not publish or expose its EWS budget values, so the script adapts to
+        them: it runs one request at a time (well under the 27-connection limit), keeps batches
+        small enough to finish inside the server's one-minute batch limit, and honors
+        BackOffMilliseconds. On every throttle it doubles the gap between requests and halves the
+        batch size; after 20 clean requests in a row it eases back toward full speed. This keeps
+        the run just under whatever limit the service is enforcing at the time.
+
     Duplicate protection (safe to rerun):
         - Target folders are matched by path and only created if missing.
         - Each copied item is tagged in the target with a hidden property holding its source key.
@@ -56,7 +64,7 @@ param(
     [ValidateSet('msgfolderroot', 'archivemsgfolderroot')][string]$TargetRoot = 'msgfolderroot',
     [string[]]$ExcludeFolders = @('\Sync Issues', '\Conversation History', '\Outbox'),
     [ValidateRange(1, 100)][int]$BatchSize = 10,
-    [long]$MaxBatchBytes = 20MB,
+    [long]$MaxBatchBytes = 10MB,
     [int]$MaxRetries = 8,
     [int]$CheckpointSeconds = 60
 )
@@ -108,10 +116,43 @@ function Get-TargetPath([string]$Path) {
     if ($TargetSubfolder) { '\' + $TargetSubfolder.Trim('\') + $Path } else { $Path }
 }
 
+# --- Adaptive pacing: back off hard on throttling, recover slowly when healthy ---
+$ThrottleCodes = @('ErrorServerBusy', 'ErrorExceededConnectionCount', 'ErrorExceededFindCountLimit', 'ErrorTooManyObjectsOpened')
+
+function Test-Throttled($Msg) {
+    $code = Get-Text $Msg 'ResponseCode'
+    ($code -in $ThrottleCodes) -or ($code -eq 'ErrorInternalServerError' -and $Msg.OuterXml -match 'ServerBusy')
+}
+
+function Find-ThrottleMessage([xml]$Xml) {
+    foreach ($m in $Xml.SelectNodes("//*[@ResponseClass='Error']")) { if (Test-Throttled $m) { return $m } }
+}
+
+function Register-Throttle {
+    $p = $script:Pace
+    $p.DelayMs     = [math]::Min(10000, [math]::Max(500, $p.DelayMs * 2))
+    $p.BatchSize   = [math]::Max(1, [int][math]::Floor($p.BatchSize / 2))
+    $p.BatchBytes  = [math]::Max(1MB, [long]($p.BatchBytes / 2))
+    $p.CleanStreak = 0
+}
+
+function Register-Success {
+    $p = $script:Pace
+    $p.CleanStreak++
+    if ($p.CleanStreak -ge 20) {
+        $p.CleanStreak = 0
+        $p.DelayMs     = [int]($p.DelayMs * 0.75); if ($p.DelayMs -lt 50) { $p.DelayMs = 0 }
+        $p.BatchSize   = [math]::Min($BatchSize, $p.BatchSize + 1)
+        $p.BatchBytes  = [math]::Min($MaxBatchBytes, $p.BatchBytes + 2MB)
+    }
+}
+
 function Write-Advisory([string]$Reason, [double]$Seconds) {
     $now = Get-Date
-    Write-Host ('[{0}] BACKOFF: {1}. Pausing {2:N0} s, resuming about {3}.' -f `
-        $now.ToString('HH:mm:ss'), $Reason, $Seconds, $now.AddSeconds($Seconds).ToString('HH:mm:ss')) `
+    $p   = $script:Pace
+    Write-Host ('[{0}] BACKOFF: {1}. Pausing {2:N0} s, resuming about {3}. Pace now: {4} ms between requests, batch {5} items / {6:N0} MB.' -f `
+        $now.ToString('HH:mm:ss'), $Reason, $Seconds, $now.AddSeconds($Seconds).ToString('HH:mm:ss'),
+        $p.DelayMs, $p.BatchSize, ($p.BatchBytes / 1MB)) `
         -ForegroundColor Black -BackgroundColor Yellow
     $script:Stats.Backoffs++
     $script:Stats.BackoffSeconds += $Seconds
@@ -168,7 +209,9 @@ function Get-AccessToken {
 
 #region EWS transport
 function Invoke-Ews {
-    param([Parameter(Mandatory)][string]$Body, [Parameter(Mandatory)][string]$AnchorMailbox, [switch]$NoNetworkRetry)
+    param([Parameter(Mandatory)][string]$Body, [Parameter(Mandatory)][string]$AnchorMailbox,
+          [switch]$NoNetworkRetry,    # don't resend on connection loss (uploads)
+          [switch]$PerItemThrottle)   # caller handles per-item throttle errors in a 200 response
 
     $envelope = @"
 <?xml version="1.0" encoding="utf-8"?>
@@ -186,6 +229,8 @@ function Invoke-Ews {
             Authorization     = "Bearer $(Get-AccessToken)"
             'X-AnchorMailbox' = $AnchorMailbox
         }
+        if ($script:Pace.DelayMs -gt 0) { Start-Sleep -Milliseconds $script:Pace.DelayMs }
+        $timer = [Diagnostics.Stopwatch]::StartNew()
         try {
             $resp = Invoke-WebRequest -Uri $EwsUrl -Method Post -Headers $headers -Body $bytes `
                 -ContentType 'text/xml; charset=utf-8' -SkipHttpErrorCheck -TimeoutSec 900
@@ -203,11 +248,40 @@ function Invoke-Ews {
         $code    = [int]$resp.StatusCode
         $content = [string]$resp.Content
 
-        if ($code -eq 200) { return [xml]$content.TrimStart([char]0xFEFF) }
+        if ($code -eq 200) {
+            $xml = [xml]$content.TrimStart([char]0xFEFF)
+
+            # Throttling can also arrive inside a 200 response (ErrorServerBusy, or ErrorInternalServerError
+            # with an inner ServerBusy). Retry the whole request unless the caller handles items itself.
+            if (-not $PerItemThrottle) {
+                $busy = Find-ThrottleMessage $xml
+                if ($null -ne $busy -and $attempt -lt $MaxRetries) {
+                    Register-Throttle
+                    $wait = (Get-BackOffMs $busy) / 1000
+                    Write-Advisory ("Server busy ({0}), attempt {1} of {2}" -f (Get-Text $busy 'ResponseCode'), $attempt, $MaxRetries) $wait
+                    Start-Sleep -Seconds $wait
+                    continue
+                }
+            }
+
+            # EWS stops executing a batch after one minute. If a request is running long, shrink batches early.
+            if ($timer.Elapsed.TotalSeconds -gt 40) {
+                $p = $script:Pace
+                $p.BatchSize   = [math]::Max(1, [int][math]::Floor($p.BatchSize / 2))
+                $p.BatchBytes  = [math]::Max(1MB, [long]($p.BatchBytes / 2))
+                $p.CleanStreak = 0
+                Write-Host ('[{0}] PACE: request took {1:N0} s (server limit is 60 s). Batch reduced to {2} items / {3:N0} MB.' -f `
+                    (Get-Date).ToString('HH:mm:ss'), $timer.Elapsed.TotalSeconds, $p.BatchSize, ($p.BatchBytes / 1MB)) `
+                    -ForegroundColor Black -BackgroundColor Yellow
+            }
+            else { Register-Success }
+            return $xml
+        }
 
         if ($code -eq 401) { $script:Token.ExpiresOn = Get-Date; continue }   # force token refresh
 
-        if (($code -in @(429, 503)) -or ($code -eq 500 -and $content -match 'ErrorServerBusy')) {
+        if (($code -in @(429, 503)) -or ($code -eq 500 -and $content -match 'ErrorServerBusy|ErrorExceededConnectionCount')) {
+            Register-Throttle
             $wait = 30 * $attempt
             if ($content -match 'Name="BackOffMilliseconds">(\d+)<') { $wait = [math]::Ceiling([int]$Matches[1] / 1000) }
             elseif ($resp.Headers['Retry-After']) { $wait = [int]($resp.Headers['Retry-After'] | Select-Object -First 1) }
@@ -519,7 +593,7 @@ function Copy-Batch([object[]]$Batch, [string]$TargetFolderId) {
         # --- Export from source ---
         try {
             $ids  = -join ($queue | ForEach-Object { '<t:ItemId Id="{0}"/>' -f $_.SourceItemId })
-            $xml  = Invoke-Ews -AnchorMailbox $SourceMailbox -Body "<m:ExportItems><m:ItemIds>$ids</m:ItemIds></m:ExportItems>"
+            $xml  = Invoke-Ews -AnchorMailbox $SourceMailbox -PerItemThrottle -Body "<m:ExportItems><m:ItemIds>$ids</m:ItemIds></m:ExportItems>"
             $msgs = @($xml.SelectNodes("//*[local-name()='ExportItemsResponseMessage']"))
             if ($msgs.Count -ne $queue.Count) { throw "ExportItems returned $($msgs.Count) results for $($queue.Count) items." }
         }
@@ -535,7 +609,7 @@ function Copy-Batch([object[]]$Batch, [string]$TargetFolderId) {
             if ($m.GetAttribute('ResponseClass') -eq 'Success') {
                 $exported.Add([pscustomobject]@{ Row = $r; Data = Get-Text $m 'Data' })
             }
-            elseif ($rc -eq 'ErrorServerBusy' -and $canRetry) {
+            elseif ((Test-Throttled $m) -and $canRetry) {
                 $retry.Add($r); $backoff = [math]::Max($backoff, (Get-BackOffMs $m))
             }
             else {
@@ -549,7 +623,7 @@ function Copy-Batch([object[]]$Batch, [string]$TargetFolderId) {
                 $parts = foreach ($e in $exported) {
                     '<t:Item CreateAction="CreateNew"><t:ParentFolderId Id="{0}"/><t:Data>{1}</t:Data></t:Item>' -f $TargetFolderId, $e.Data
                 }
-                $xml  = Invoke-Ews -AnchorMailbox $TargetMailbox -NoNetworkRetry -Body "<m:UploadItems><m:Items>$(-join $parts)</m:Items></m:UploadItems>"
+                $xml  = Invoke-Ews -AnchorMailbox $TargetMailbox -NoNetworkRetry -PerItemThrottle -Body "<m:UploadItems><m:Items>$(-join $parts)</m:Items></m:UploadItems>"
                 $msgs = @($xml.SelectNodes("//*[local-name()='UploadItemsResponseMessage']"))
                 if ($msgs.Count -ne $exported.Count) { throw "UploadItems returned $($msgs.Count) results for $($exported.Count) items." }
             }
@@ -566,7 +640,7 @@ function Copy-Batch([object[]]$Batch, [string]$TargetFolderId) {
                 if ($m.GetAttribute('ResponseClass') -eq 'Success') {
                     $uploaded.Add([pscustomobject]@{ Row = $r; NewId = (Get-Node $m 'ItemId').GetAttribute('Id') })
                 }
-                elseif ($rc -eq 'ErrorServerBusy' -and $canRetry) {
+                elseif ((Test-Throttled $m) -and $canRetry) {
                     $retry.Add($r); $backoff = [math]::Max($backoff, (Get-BackOffMs $m))
                 }
                 else {
@@ -590,6 +664,7 @@ function Copy-Batch([object[]]$Batch, [string]$TargetFolderId) {
         }
 
         if ($retry.Count) {
+            Register-Throttle
             Write-Advisory "$($retry.Count) item(s) throttled by server, attempt $attempt of $MaxRetries" ($backoff / 1000)
             Start-Sleep -Milliseconds $backoff
         }
@@ -637,7 +712,7 @@ function Start-Transfer {
         $batch = [Collections.Generic.List[object]]::new(); $size = 0
         foreach ($r in $toCopy) {
             $s = [long]$r.SizeBytes
-            if ($batch.Count -and ($batch.Count -ge $BatchSize -or ($size + $s) -gt $MaxBatchBytes)) {
+            if ($batch.Count -and ($batch.Count -ge $script:Pace.BatchSize -or ($size + $s) -gt $script:Pace.BatchBytes)) {
                 Copy-Batch $batch.ToArray() $targetId
                 $batch.Clear(); $size = 0
             }
@@ -653,6 +728,7 @@ $script:Stats          = @{ Copied = 0; Exists = 0; Failed = 0; Backoffs = 0; Ba
 $script:Rows           = [Collections.Generic.List[object]]::new()
 $script:Index          = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
 $script:LastCheckpoint = Get-Date
+$script:Pace           = [pscustomobject]@{ DelayMs = 0; BatchSize = $BatchSize; BatchBytes = $MaxBatchBytes; CleanStreak = 0 }
 
 try {
     if (Import-Inventory) { Save-Inventory } else { Open-Journal }
