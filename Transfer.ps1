@@ -20,7 +20,7 @@
         every -CheckpointSeconds and at exit. If the inventory is open in Excel, the merge is
         deferred and nothing is lost.
 
-    Auth: delegated EWS.AccessAsUser.All via device code flow. The signed-in account needs
+    Auth: delegated EWS.AccessAsUser.All via username/password (ROPC). The signed-in account needs
     FullAccess on BOTH mailboxes. Use the same -TargetSubfolder / -ExcludeFolders for both phases.
 
 .EXAMPLE
@@ -95,7 +95,7 @@ function Get-TargetPath([string]$Path) {
 }
 #endregion
 
-#region Auth (device code + refresh)
+#region Auth (username/password + refresh)
 function Set-Token($r) {
     $script:Token = [pscustomobject]@{
         AccessToken  = $r.access_token
@@ -105,26 +105,19 @@ function Set-Token($r) {
 }
 
 function Connect-Ews {
-    $dc = Invoke-RestMethod -Method Post -Uri "$AuthBase/devicecode" -Body @{ client_id = $ClientId; scope = $Scope }
-    Write-Host $dc.message -ForegroundColor Yellow
-    $deadline = (Get-Date).AddSeconds([int]$dc.expires_in)
-    $interval = [int]$dc.interval
-    while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Seconds $interval
-        $resp = Invoke-WebRequest -Method Post -Uri "$AuthBase/token" -SkipHttpErrorCheck -Body @{
-            grant_type  = 'urn:ietf:params:oauth:grant-type:device_code'
-            client_id   = $ClientId
-            device_code = $dc.device_code
-        }
-        $json = $resp.Content | ConvertFrom-Json
-        if ([int]$resp.StatusCode -eq 200) { Set-Token $json; Write-Host 'Signed in.'; return }
-        switch ($json.error) {
-            'authorization_pending' { }
-            'slow_down'             { $interval += 5 }
-            default                 { throw "Sign-in failed: $($json.error_description)" }
-        }
+    # Username/password sign-in (ROPC). Does not work if the account must complete MFA.
+    $cred = Get-Credential -Message 'Account with FullAccess on both mailboxes (UPN)'
+    $resp = Invoke-WebRequest -Method Post -Uri "$AuthBase/token" -SkipHttpErrorCheck -Body @{
+        grant_type = 'password'
+        client_id  = $ClientId
+        scope      = $Scope
+        username   = $cred.UserName
+        password   = $cred.GetNetworkCredential().Password
     }
-    throw 'Device code expired before sign-in completed.'
+    $json = $resp.Content | ConvertFrom-Json
+    if ([int]$resp.StatusCode -ne 200) { throw "Sign-in failed: $($json.error_description)" }
+    Set-Token $json
+    Write-Host "Signed in as $($cred.UserName)."
 }
 
 function Get-AccessToken {
