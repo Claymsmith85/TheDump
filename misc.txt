@@ -1,0 +1,44 @@
+Create a new private endpoint with sub-resource file, register it in DNS, then test.
+
+1. Find the subnet the existing endpoint uses (reuse it):
+
+powershell
+Get-AzPrivateEndpoint -Name "pep-core-data-sacoredataspksfpstorage-sftpstorage-infra000" |
+  Select-Object ResourceGroupName, Location, @{n='Subnet';e={$_.Subnet.Id}}
+
+2. Create the file endpoint:
+
+powershell
+$sa = Get-AzStorageAccount -ResourceGroupName <sa-rg> -Name sacoredataspksfpstorage
+
+$conn = New-AzPrivateLinkServiceConnection -Name "plsc-sacoredataspksfpstorage-file" `
+  -PrivateLinkServiceId $sa.Id -GroupId "file"
+
+$subnet = Get-AzVirtualNetworkSubnetConfig -ResourceId "<subnet-id-from-step-1>"
+
+New-AzPrivateEndpoint -Name "pep-core-data-sacoredataspksfpstorage-file-infra000" `
+  -ResourceGroupName <pe-rg> -Location <location> `
+  -Subnet $subnet -PrivateLinkServiceConnection $conn
+
+3. Register it in DNS
+If the existing blob endpoints are in a central privatelink.blob.core.windows.net zone, the matching privatelink.file.core.windows.net zone is likely in the same resource group:
+
+powershell
+$zone = Get-AzPrivateDnsZone -ResourceGroupName <dns-rg> -Name "privatelink.file.core.windows.net"
+$cfg  = New-AzPrivateDnsZoneConfig -Name "file" -PrivateDnsZoneId $zone.ResourceId
+
+New-AzPrivateDnsZoneGroup -ResourceGroupName <pe-rg> `
+  -PrivateEndpointName "pep-core-data-sacoredataspksfpstorage-file-infra000" `
+  -Name "default" -PrivateDnsZoneConfig $cfg
+
+In hub-and-spoke setups, Azure Policy sometimes creates this DNS link automatically, so check whether the record appears on its own first. If the file zone does not exist, it must be created and linked to the hub VNet, or wherever the DNS resolver lives.
+
+4. Verify from the server:
+
+powershell
+Resolve-DnsName sacoredataspksfpstorage.file.core.windows.net
+Test-NetConnection sacoredataspksfpstorage.file.core.windows.net -Port 445
+
+The name should resolve to the new private IP and port 445 should connect. Then retry the mount.
+
+Creating the endpoint requires write access on both the storage account and the subnet. If the network team owns the hub, they may need to do steps 2 and 3.
