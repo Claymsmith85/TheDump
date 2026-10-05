@@ -1,44 +1,116 @@
-Create a new private endpoint with sub-resource file, register it in DNS, then test.
+#Requires -Modules Az.Accounts, Az.Storage, Az.Network, Az.PrivateDns
+<#
+.SYNOPSIS
+    Adds a 'file' private endpoint to a storage account, reusing the subnet of an
+    existing private endpoint, and registers it in privatelink.file.core.windows.net.
 
-1. Find the subnet the existing endpoint uses (reuse it):
+.EXAMPLE
+    .\New-StorageFilePrivateEndpoint.ps1 `
+        -SubscriptionId "<sub-id>" `
+        -StorageResourceGroup "<sa-rg>" `
+        -StorageAccountName "sacoredataspksfpstorage" `
+        -ReferenceEndpointName "pep-core-data-sacoredataspksfpstorage-sftpstorage-infra000" `
+        -DnsZoneResourceGroup "<dns-rg>" `
+        -DnsZoneSubscriptionId "<hub-sub-id>"
+#>
+[CmdletBinding(SupportsShouldProcess)]
+param(
+    [Parameter(Mandatory)] [string] $SubscriptionId,
+    [Parameter(Mandatory)] [string] $StorageResourceGroup,
+    [Parameter(Mandatory)] [string] $StorageAccountName,
+    [Parameter(Mandatory)] [string] $ReferenceEndpointName,   # existing blob PE; subnet/location/RG are copied from it
+    [string] $NewEndpointName,                                 # default: pep-<account>-file
+    [string] $DnsZoneResourceGroup,                            # omit to skip DNS registration
+    [string] $DnsZoneSubscriptionId,                           # default: same as SubscriptionId
+    [string] $TenantId
+)
 
-powershell
-Get-AzPrivateEndpoint -Name "pep-core-data-sacoredataspksfpstorage-sftpstorage-infra000" |
-  Select-Object ResourceGroupName, Location, @{n='Subnet';e={$_.Subnet.Id}}
+$ErrorActionPreference = 'Stop'
+$zoneName = 'privatelink.file.core.windows.net'
+if (-not $NewEndpointName)      { $NewEndpointName = "pep-$StorageAccountName-file" }
+if (-not $DnsZoneSubscriptionId) { $DnsZoneSubscriptionId = $SubscriptionId }
 
-2. Create the file endpoint:
+# --- Context ---------------------------------------------------------------
+$ctxArgs = @{ Subscription = $SubscriptionId }
+if ($TenantId) { $ctxArgs.Tenant = $TenantId }
+Set-AzContext @ctxArgs | Out-Null
+Write-Host "Context: $((Get-AzContext).Subscription.Name)"
 
-powershell
-$sa = Get-AzStorageAccount -ResourceGroupName <sa-rg> -Name sacoredataspksfpstorage
+# --- Storage account -------------------------------------------------------
+$sa = Get-AzStorageAccount -ResourceGroupName $StorageResourceGroup -Name $StorageAccountName
+Write-Host "Storage account: $($sa.Id)"
 
-$conn = New-AzPrivateLinkServiceConnection -Name "plsc-sacoredataspksfpstorage-file" `
-  -PrivateLinkServiceId $sa.Id -GroupId "file"
+# --- Reference endpoint (subnet, location, RG) -----------------------------
+$ref = Get-AzPrivateEndpoint | Where-Object Name -eq $ReferenceEndpointName
+if (-not $ref) { throw "Reference private endpoint '$ReferenceEndpointName' not found in this subscription." }
 
-$subnet = Get-AzVirtualNetworkSubnetConfig -ResourceId "<subnet-id-from-step-1>"
+$subnet   = Get-AzVirtualNetworkSubnetConfig -ResourceId $ref.Subnet.Id
+$location = $ref.Location
+$peRg     = $ref.ResourceGroupName
+Write-Host "Subnet:   $($ref.Subnet.Id)"
+Write-Host "Location: $location   PE resource group: $peRg"
 
-New-AzPrivateEndpoint -Name "pep-core-data-sacoredataspksfpstorage-file-infra000" `
-  -ResourceGroupName <pe-rg> -Location <location> `
-  -Subnet $subnet -PrivateLinkServiceConnection $conn
+# --- Existing file endpoint check ------------------------------------------
+$existing = Get-AzPrivateEndpoint | Where-Object {
+    $_.PrivateLinkServiceConnections.PrivateLinkServiceId -contains $sa.Id -and
+    $_.PrivateLinkServiceConnections.GroupIds -contains 'file'
+}
+if ($existing) {
+    Write-Warning "A 'file' private endpoint already exists: $($existing.Name). Using it."
+    $pe = $existing | Select-Object -First 1
+}
+else {
+    # --- Create endpoint ---------------------------------------------------
+    $conn = New-AzPrivateLinkServiceConnection -Name "plsc-$StorageAccountName-file" `
+        -PrivateLinkServiceId $sa.Id -GroupId 'file'
 
-3. Register it in DNS
-If the existing blob endpoints are in a central privatelink.blob.core.windows.net zone, the matching privatelink.file.core.windows.net zone is likely in the same resource group:
+    if ($PSCmdlet.ShouldProcess($NewEndpointName, 'Create private endpoint (file)')) {
+        $pe = New-AzPrivateEndpoint -Name $NewEndpointName -ResourceGroupName $peRg `
+            -Location $location -Subnet $subnet -PrivateLinkServiceConnection $conn
+        Write-Host "Created private endpoint: $($pe.Name)"
+    }
+}
 
-powershell
-$zone = Get-AzPrivateDnsZone -ResourceGroupName <dns-rg> -Name "privatelink.file.core.windows.net"
-$cfg  = New-AzPrivateDnsZoneConfig -Name "file" -PrivateDnsZoneId $zone.ResourceId
+if ($pe) {
+    $state = $pe.PrivateLinkServiceConnections[0].PrivateLinkServiceConnectionState.Status
+    $ips   = ($pe.CustomDnsConfigs.IpAddresses) -join ', '
+    Write-Host "Connection state: $state"
+    Write-Host "Private IP(s):    $ips"
+    if ($state -ne 'Approved') {
+        Write-Warning "Connection is not approved. Approve it under Storage account > Networking > Private endpoint connections."
+    }
+}
 
-New-AzPrivateDnsZoneGroup -ResourceGroupName <pe-rg> `
-  -PrivateEndpointName "pep-core-data-sacoredataspksfpstorage-file-infra000" `
-  -Name "default" -PrivateDnsZoneConfig $cfg
+# --- DNS registration ------------------------------------------------------
+if ($DnsZoneResourceGroup -and $pe) {
+    if ($DnsZoneSubscriptionId -ne $SubscriptionId) { Set-AzContext -Subscription $DnsZoneSubscriptionId | Out-Null }
+    $zone = Get-AzPrivateDnsZone -ResourceGroupName $DnsZoneResourceGroup -Name $zoneName -ErrorAction SilentlyContinue
+    if ($DnsZoneSubscriptionId -ne $SubscriptionId) { Set-AzContext @ctxArgs | Out-Null }
 
-In hub-and-spoke setups, Azure Policy sometimes creates this DNS link automatically, so check whether the record appears on its own first. If the file zone does not exist, it must be created and linked to the hub VNet, or wherever the DNS resolver lives.
+    if (-not $zone) {
+        Write-Warning "Zone '$zoneName' not found in $DnsZoneResourceGroup. Create and link it to the DNS VNet, then rerun."
+    }
+    else {
+        $existingGroup = Get-AzPrivateDnsZoneGroup -ResourceGroupName $peRg -PrivateEndpointName $pe.Name -ErrorAction SilentlyContinue
+        if ($existingGroup) {
+            Write-Host "DNS zone group already present: $($existingGroup.Name)"
+        }
+        elseif ($PSCmdlet.ShouldProcess($pe.Name, "Link to $zoneName")) {
+            $cfg = New-AzPrivateDnsZoneConfig -Name 'file' -PrivateDnsZoneId $zone.ResourceId
+            New-AzPrivateDnsZoneGroup -ResourceGroupName $peRg -PrivateEndpointName $pe.Name `
+                -Name 'default' -PrivateDnsZoneConfig $cfg | Out-Null
+            Write-Host "Registered in $zoneName"
+        }
+    }
+}
+else {
+    Write-Host "DNS registration skipped."
+}
 
-4. Verify from the server:
-
-powershell
-Resolve-DnsName sacoredataspksfpstorage.file.core.windows.net
-Test-NetConnection sacoredataspksfpstorage.file.core.windows.net -Port 445
-
-The name should resolve to the new private IP and port 445 should connect. Then retry the mount.
-
-Creating the endpoint requires write access on both the storage account and the subnet. If the network team owns the hub, they may need to do steps 2 and 3.
+# --- Verify from this machine ----------------------------------------------
+$fqdn = "$StorageAccountName.file.core.windows.net"
+Write-Host "`nVerification for $fqdn"
+Resolve-DnsName $fqdn -ErrorAction SilentlyContinue |
+    Where-Object { $_.IPAddress } | Select-Object Name, IPAddress | Format-Table -AutoSize
+Test-NetConnection $fqdn -Port 445 -InformationLevel Quiet |
+    ForEach-Object { Write-Host "Port 445 reachable: $_" }
