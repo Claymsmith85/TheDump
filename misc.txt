@@ -1,116 +1,59 @@
-#Requires -Modules Az.Accounts, Az.Storage, Az.Network, Az.PrivateDns
-<#
-.SYNOPSIS
-    Adds a 'file' private endpoint to a storage account, reusing the subnet of an
-    existing private endpoint, and registers it in privatelink.file.core.windows.net.
+The short answer
+Put it on the machine-wide module path with a manifest, and PowerShell will autoload it for every user on that device:
 
-.EXAMPLE
-    .\New-StorageFilePrivateEndpoint.ps1 `
-        -SubscriptionId "<sub-id>" `
-        -StorageResourceGroup "<sa-rg>" `
-        -StorageAccountName "sacoredataspksfpstorage" `
-        -ReferenceEndpointName "pep-core-data-sacoredataspksfpstorage-sftpstorage-infra000" `
-        -DnsZoneResourceGroup "<dns-rg>" `
-        -DnsZoneSubscriptionId "<hub-sub-id>"
-#>
-[CmdletBinding(SupportsShouldProcess)]
-param(
-    [Parameter(Mandatory)] [string] $SubscriptionId,
-    [Parameter(Mandatory)] [string] $StorageResourceGroup,
-    [Parameter(Mandatory)] [string] $StorageAccountName,
-    [Parameter(Mandatory)] [string] $ReferenceEndpointName,   # existing blob PE; subnet/location/RG are copied from it
-    [string] $NewEndpointName,                                 # default: pep-<account>-file
-    [string] $DnsZoneResourceGroup,                            # omit to skip DNS registration
-    [string] $DnsZoneSubscriptionId,                           # default: same as SubscriptionId
-    [string] $TenantId
-)
 
-$ErrorActionPreference = 'Stop'
-$zoneName = 'privatelink.file.core.windows.net'
-if (-not $NewEndpointName)      { $NewEndpointName = "pep-$StorageAccountName-file" }
-if (-not $DnsZoneSubscriptionId) { $DnsZoneSubscriptionId = $SubscriptionId }
+C:\Program Files\WindowsPowerShell\Modules\IdentityCheckout\
+    IdentityCheckout.psd1
+    IdentityCheckout.psm1
+The folder name must match the module name. That path is on $env:PSModulePath for both Windows PowerShell 5.1 and PowerShell 7, so one copy serves both. Once it's there, Request-IdentityCheckout tab-completes and imports on first use in any user's session — no Import-Module needed.
 
-# --- Context ---------------------------------------------------------------
-$ctxArgs = @{ Subscription = $SubscriptionId }
-if ($TenantId) { $ctxArgs.Tenant = $TenantId }
-Set-AzContext @ctxArgs | Out-Null
-Write-Host "Context: $((Get-AzContext).Subscription.Name)"
+First: which copy to deploy
+There are two divergent copies in this repo, and the newer commit is the older code:
 
-# --- Storage account -------------------------------------------------------
-$sa = Get-AzStorageAccount -ResourceGroupName $StorageResourceGroup -Name $StorageAccountName
-Write-Host "Storage account: $($sa.Id)"
+File	Last commit	Content
+scripts/IdentityCheckout.psm1	Sep 29 (13c5396)	ConstrainedLanguage-safe, ConvertTo-Base64String without [Convert], app-only Graph propagation check
+IdentityCheckout.psm1	Oct 1 (2d3b953 "re-sync")	Uses [Convert]::ToBase64String, no ConstrainedLanguage support
+Deploy scripts/ — it's what README.md:41 and MANUAL-STEPS.md:101 reference, and it's the only one that survives ConstrainedLanguage mode. The root copy looks like a bad re-sync that reverted that work; worth cleaning up separately.
 
-# --- Reference endpoint (subnet, location, RG) -----------------------------
-$ref = Get-AzPrivateEndpoint | Where-Object Name -eq $ReferenceEndpointName
-if (-not $ref) { throw "Reference private endpoint '$ReferenceEndpointName' not found in this subscription." }
+Install steps (elevated, on the target device)
 
-$subnet   = Get-AzVirtualNetworkSubnetConfig -ResourceId $ref.Subnet.Id
-$location = $ref.Location
-$peRg     = $ref.ResourceGroupName
-Write-Host "Subnet:   $($ref.Subnet.Id)"
-Write-Host "Location: $location   PE resource group: $peRg"
+$dest = 'C:\Program Files\WindowsPowerShell\Modules\IdentityCheckout'
+New-Item -ItemType Directory -Path $dest -Force | Out-Null
+Copy-Item .\scripts\IdentityCheckout.psm1 -Destination $dest -Force
+Unblock-File "$dest\IdentityCheckout.psm1"   # if copied from a share or download
 
-# --- Existing file endpoint check ------------------------------------------
-$existing = Get-AzPrivateEndpoint | Where-Object {
-    $_.PrivateLinkServiceConnections.PrivateLinkServiceId -contains $sa.Id -and
-    $_.PrivateLinkServiceConnections.GroupIds -contains 'file'
-}
-if ($existing) {
-    Write-Warning "A 'file' private endpoint already exists: $($existing.Name). Using it."
-    $pe = $existing | Select-Object -First 1
-}
-else {
-    # --- Create endpoint ---------------------------------------------------
-    $conn = New-AzPrivateLinkServiceConnection -Name "plsc-$StorageAccountName-file" `
-        -PrivateLinkServiceId $sa.Id -GroupId 'file'
+New-ModuleManifest "$dest\IdentityCheckout.psd1" `
+    -RootModule       'IdentityCheckout.psm1' `
+    -ModuleVersion    '1.0.0' `
+    -FunctionsToExport 'Request-IdentityCheckout','Connect-CheckedOutIdentity','Clear-IdentityCheckout' `
+    -RequiredModules  'Az.Accounts','Az.Automation','Microsoft.Graph.Authentication'
+The manifest matters: without it, command discovery depends on PowerShell parsing the .psm1, which is slower and less reliable. -FunctionsToExport mirrors the module's own Export-ModuleMember at scripts/IdentityCheckout.psm1.
 
-    if ($PSCmdlet.ShouldProcess($NewEndpointName, 'Create private endpoint (file)')) {
-        $pe = New-AzPrivateEndpoint -Name $NewEndpointName -ResourceGroupName $peRg `
-            -Location $location -Subnet $subnet -PrivateLinkServiceConnection $conn
-        Write-Host "Created private endpoint: $($pe.Name)"
-    }
-}
+Three things that will bite you
+Signing is now mandatory, not optional. MANUAL-STEPS.md:118 already flags this. Under AllSigned or RemoteSigned, sign both the .psm1 and the .psd1 with a policy-trusted cert:
 
-if ($pe) {
-    $state = $pe.PrivateLinkServiceConnections[0].PrivateLinkServiceConnectionState.Status
-    $ips   = ($pe.CustomDnsConfigs.IpAddresses) -join ', '
-    Write-Host "Connection state: $state"
-    Write-Host "Private IP(s):    $ips"
-    if ($state -ne 'Approved') {
-        Write-Warning "Connection is not approved. Approve it under Storage account > Networking > Private endpoint connections."
-    }
-}
 
-# --- DNS registration ------------------------------------------------------
-if ($DnsZoneResourceGroup -and $pe) {
-    if ($DnsZoneSubscriptionId -ne $SubscriptionId) { Set-AzContext -Subscription $DnsZoneSubscriptionId | Out-Null }
-    $zone = Get-AzPrivateDnsZone -ResourceGroupName $DnsZoneResourceGroup -Name $zoneName -ErrorAction SilentlyContinue
-    if ($DnsZoneSubscriptionId -ne $SubscriptionId) { Set-AzContext @ctxArgs | Out-Null }
+$cert = Get-ChildItem Cert:\LocalMachine\My -CodeSigningCert | Select-Object -First 1
+Set-AuthenticodeSignature "$dest\IdentityCheckout.psm1" -Certificate $cert -TimestampServer 'http://timestamp.digicert.com'
+Set-AuthenticodeSignature "$dest\IdentityCheckout.psd1" -Certificate $cert -TimestampServer 'http://timestamp.digicert.com'
+Dependencies must also be AllUsers-scoped. Autoloading the module gets you nothing if Az.Accounts lives in one operator's CurrentUser scope:
 
-    if (-not $zone) {
-        Write-Warning "Zone '$zoneName' not found in $DnsZoneResourceGroup. Create and link it to the DNS VNet, then rerun."
-    }
-    else {
-        $existingGroup = Get-AzPrivateDnsZoneGroup -ResourceGroupName $peRg -PrivateEndpointName $pe.Name -ErrorAction SilentlyContinue
-        if ($existingGroup) {
-            Write-Host "DNS zone group already present: $($existingGroup.Name)"
-        }
-        elseif ($PSCmdlet.ShouldProcess($pe.Name, "Link to $zoneName")) {
-            $cfg = New-AzPrivateDnsZoneConfig -Name 'file' -PrivateDnsZoneId $zone.ResourceId
-            New-AzPrivateDnsZoneGroup -ResourceGroupName $peRg -PrivateEndpointName $pe.Name `
-                -Name 'default' -PrivateDnsZoneConfig $cfg | Out-Null
-            Write-Host "Registered in $zoneName"
-        }
-    }
-}
-else {
-    Write-Host "DNS registration skipped."
-}
 
-# --- Verify from this machine ----------------------------------------------
-$fqdn = "$StorageAccountName.file.core.windows.net"
-Write-Host "`nVerification for $fqdn"
-Resolve-DnsName $fqdn -ErrorAction SilentlyContinue |
-    Where-Object { $_.IPAddress } | Select-Object Name, IPAddress | Format-Table -AutoSize
-Test-NetConnection $fqdn -Port 445 -InformationLevel Quiet |
-    ForEach-Object { Write-Host "Port 445 reachable: $_" }
+Install-Module Az.Accounts, Az.Automation, Microsoft.Graph.Authentication -Scope AllUsers -Force
+# plus, per service actually used:
+Install-Module ExchangeOnlineManagement, MicrosoftTeams -Scope AllUsers -Force
+-RequiredModules is a hard gate. If any listed module is missing, the import fails outright rather than degrading. If you'd rather operators get a clear error from the function itself, drop -RequiredModules from the manifest.
+
+If you want it actually imported at session start
+Autoloading covers the real goal. But if you need the module loaded before the first command — e.g. to print a banner about the checkout window — use the AllUsersAllHosts profile:
+
+5.1: C:\Windows\System32\WindowsPowerShell\v1.0\profile.ps1
+7: C:\Program Files\PowerShell\7\profile.ps1
+
+Import-Module IdentityCheckout
+Caveats: it's a separate file per PowerShell major version, it's skipped under -NoProfile, and the profile itself needs signing under AllSigned. Treat it as an addition to the module-path install, not a replacement.
+
+The module's top-level Set-StrictMode -Version Latest and $ErrorActionPreference = 'Stop' stay module-scoped either way — they won't leak into operators' interactive sessions.
+
+For fleet rollout
+Everything above (copy → manifest → Unblock-File → sign → Install-Module -Scope AllUsers) is exactly what you'd wrap as an Intune PowerShell script or Win32 app scoped to the operator device group, with the code-signing cert deployed to LocalMachine\TrustedPublisher via a separate certificate profile.
